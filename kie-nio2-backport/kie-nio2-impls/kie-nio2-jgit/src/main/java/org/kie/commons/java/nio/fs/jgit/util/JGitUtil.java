@@ -37,17 +37,12 @@ import org.eclipse.jgit.api.CreateBranchCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ListBranchCommand;
 import org.eclipse.jgit.api.LogCommand;
-import org.eclipse.jgit.api.MergeResult;
-import org.eclipse.jgit.api.errors.CheckoutConflictException;
 import org.eclipse.jgit.api.errors.ConcurrentRefUpdateException;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.errors.InvalidRemoteException;
 import org.eclipse.jgit.api.errors.JGitInternalException;
-import org.eclipse.jgit.api.errors.NoHeadException;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.dircache.DirCache;
-import org.eclipse.jgit.dircache.DirCacheBuilder;
-import org.eclipse.jgit.dircache.DirCacheCheckout;
 import org.eclipse.jgit.dircache.DirCacheEditor;
 import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.internal.JGitText;
@@ -64,20 +59,13 @@ import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryCache;
 import org.eclipse.jgit.lib.StoredConfig;
-import org.eclipse.jgit.merge.MergeMessageFormatter;
-import org.eclipse.jgit.merge.MergeStrategy;
-import org.eclipse.jgit.merge.Merger;
-import org.eclipse.jgit.merge.ResolveMerger;
-import org.eclipse.jgit.merge.SquashMessageFormatter;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevObject;
 import org.eclipse.jgit.revwalk.RevWalk;
-import org.eclipse.jgit.revwalk.RevWalkUtils;
 import org.eclipse.jgit.storage.file.FileRepository;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.treewalk.CanonicalTreeParser;
-import org.eclipse.jgit.treewalk.FileTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.treewalk.filter.PathFilter;
 import org.kie.commons.data.Pair;
@@ -92,8 +80,6 @@ import org.kie.commons.java.nio.fs.jgit.JGitFileSystem;
 
 import static java.util.Collections.*;
 import static org.apache.commons.io.FileUtils.*;
-import static org.eclipse.jgit.api.MergeResult.*;
-import static org.eclipse.jgit.api.MergeResult.MergeStatus.*;
 import static org.eclipse.jgit.lib.Constants.*;
 import static org.eclipse.jgit.lib.FileMode.*;
 import static org.eclipse.jgit.treewalk.filter.PathFilterGroup.*;
@@ -313,8 +299,9 @@ public final class JGitUtil {
                                final String email,
                                final String message,
                                final TimeZone timeZone,
-                               final Date when ) {
-        commit( git, branchName, name, email, message, timeZone, when, new HashMap<String, File>() {{
+                               final Date when,
+                               final boolean amend ) {
+        commit( git, branchName, name, email, message, timeZone, when, amend, new HashMap<String, File>() {{
             put( path, null );
         }} );
     }
@@ -350,6 +337,7 @@ public final class JGitUtil {
                                final String message,
                                final TimeZone timeZone,
                                final Date when,
+                               final boolean amend,
                                final Map<String, File> content ) {
 
         final PersonIdent author = buildPersonIdent( git, name, email, timeZone, when );
@@ -370,7 +358,17 @@ public final class JGitUtil {
                 commit.setMessage( message );
                 //headId can be null if the repository has no commit yet
                 if ( headId != null ) {
-                    commit.setParentId( headId );
+                    if ( amend ) {
+                        final List<ObjectId> parents = new LinkedList<ObjectId>();
+                        final RevCommit previousCommit = new RevWalk( git.getRepository() ).parseCommit( headId );
+                        final RevCommit[] p = previousCommit.getParents();
+                        for ( final RevCommit revCommit : p ) {
+                            parents.add( 0, revCommit.getId() );
+                        }
+                        commit.setParentIds( parents );
+                    } else {
+                        commit.setParentId( headId );
+                    }
                 }
                 commit.setTreeId( indexTreeId );
 
@@ -437,38 +435,52 @@ public final class JGitUtil {
                                                   final ObjectId headId,
                                                   final Map<String, File> content ) {
 
+        final Map<String, File> paths = new HashMap<String, File>( content.size() );
+        final Set<String> path2delete = new HashSet<String>();
+
         final DirCache inCoreIndex = DirCache.newInCore();
-        final DirCacheBuilder dcBuilder = inCoreIndex.builder();
         final ObjectInserter inserter = git.getRepository().newObjectInserter();
-        boolean hadFile = false;
-        final Set<String> paths = new HashSet<String>( content.size() );
+        final DirCacheEditor editor = inCoreIndex.editor();
 
         try {
             for ( final Map.Entry<String, File> pathAndContent : content.entrySet() ) {
                 final String gPath = fixPath( pathAndContent.getKey() );
-                paths.add( gPath );
-                if ( pathAndContent.getValue() != null ) {
-                    hadFile = true;
-                    final DirCacheEntry dcEntry = new DirCacheEntry( gPath );
-                    dcEntry.setLength( pathAndContent.getValue().length() );
-                    dcEntry.setLastModified( pathAndContent.getValue().lastModified() );
-                    dcEntry.setFileMode( REGULAR_FILE );
+                paths.put( gPath, pathAndContent.getValue() );
+                if ( pathAndContent.getValue() == null ) {
+                    final TreeWalk treeWalk = new TreeWalk( git.getRepository() );
+                    treeWalk.addTree( new RevWalk( git.getRepository() ).parseTree( headId ) );
+                    treeWalk.setRecursive( true );
+                    treeWalk.setFilter( PathFilter.create( gPath ) );
 
-                    final InputStream inputStream = new FileInputStream( pathAndContent.getValue() );
-                    try {
-                        final ObjectId objectId = inserter.insert( Constants.OBJ_BLOB, pathAndContent.getValue().length(), inputStream );
-                        dcEntry.setObjectId( objectId );
-                    } finally {
-                        inputStream.close();
+                    while ( treeWalk.next() ) {
+                        path2delete.add( treeWalk.getPathString() );
                     }
-
-                    dcBuilder.add( dcEntry );
+                    treeWalk.release();
                 }
+            }
 
-                if ( !hadFile ) {
-                    final DirCacheEditor editor = inCoreIndex.editor();
-                    editor.add( new DirCacheEditor.DeleteTree( gPath ) );
-                    editor.finish();
+            for ( final Map.Entry<String, File> pathAndContent : paths.entrySet() ) {
+                if ( pathAndContent.getValue() != null ) {
+                    editor.add( new DirCacheEditor.PathEdit( new DirCacheEntry( pathAndContent.getKey() ) ) {
+                        @Override
+                        public void apply( final DirCacheEntry ent ) {
+                            ent.setLength( pathAndContent.getValue().length() );
+                            ent.setLastModified( pathAndContent.getValue().lastModified() );
+                            ent.setFileMode( REGULAR_FILE );
+
+                            try {
+                                final InputStream inputStream = new FileInputStream( pathAndContent.getValue() );
+                                try {
+                                    final ObjectId objectId = inserter.insert( Constants.OBJ_BLOB, pathAndContent.getValue().length(), inputStream );
+                                    ent.setObjectId( objectId );
+                                } finally {
+                                    inputStream.close();
+                                }
+                            } catch ( final Exception ex ) {
+                                throw new RuntimeException( ex );
+                            }
+                        }
+                    } );
                 }
             }
 
@@ -481,22 +493,25 @@ public final class JGitUtil {
                     final String walkPath = treeWalk.getPathString();
                     final CanonicalTreeParser hTree = treeWalk.getTree( hIdx, CanonicalTreeParser.class );
 
-                    if ( !paths.contains( walkPath ) ) {
-                        // add entries from HEAD for all other paths
-                        // create a new DirCacheEntry with data retrieved from HEAD
+                    if ( paths.get( walkPath ) == null && !path2delete.contains( walkPath ) ) {
                         final DirCacheEntry dcEntry = new DirCacheEntry( walkPath );
-                        dcEntry.setObjectId( hTree.getEntryObjectId() );
-                        dcEntry.setFileMode( hTree.getEntryFileMode() );
+                        final ObjectId _objectId = hTree.getEntryObjectId();
+                        final FileMode _fileMode = hTree.getEntryFileMode();
 
                         // add to temporary in-core index
-                        dcBuilder.add( dcEntry );
+                        editor.add( new DirCacheEditor.PathEdit( dcEntry ) {
+                            @Override
+                            public void apply( final DirCacheEntry ent ) {
+                                ent.setObjectId( _objectId );
+                                ent.setFileMode( _fileMode );
+                            }
+                        } );
                     }
                 }
                 treeWalk.release();
             }
 
-            dcBuilder.finish();
-
+            editor.finish();
         } catch ( Exception e ) {
             throw new RuntimeException( e );
         } finally {
@@ -702,7 +717,7 @@ public final class JGitUtil {
     }
 
     public static enum PathType {
-        NOT_FOUND, DIRECTORY, FILE;
+        NOT_FOUND, DIRECTORY, FILE
     }
 
     public static Pair<PathType, ObjectId> checkPath( final Git git,
@@ -736,10 +751,9 @@ public final class JGitUtil {
                 }
                 if ( tw.isSubtree() ) {
                     tw.enterSubtree();
-                    continue;
                 }
             }
-        } catch ( final Throwable t ) {
+        } catch ( final Throwable ignored ) {
         } finally {
             if ( tw != null ) {
                 tw.release();
@@ -778,10 +792,9 @@ public final class JGitUtil {
                 }
                 if ( tw.isSubtree() ) {
                     tw.enterSubtree();
-                    continue;
                 }
             }
-        } catch ( final Throwable t ) {
+        } catch ( final Throwable ignored ) {
         } finally {
             if ( tw != null ) {
                 tw.release();
@@ -824,7 +837,7 @@ public final class JGitUtil {
                     result.add( new JGitPathInfo( tw.getObjectId( 0 ), tw.getPathString(), tw.getFileMode( 0 ) ) );
                 }
             }
-        } catch ( final Throwable t ) {
+        } catch ( final Throwable ignored ) {
         } finally {
             if ( tw != null ) {
                 tw.release();
@@ -834,201 +847,201 @@ public final class JGitUtil {
         return result;
     }
 
-    public static MergeResult mergeBranches( final Git git,
-                                             final String source,
-                                             final String target )
-            throws Exception {
-
-        final Repository repo = git.getRepository();
-        final MergeStrategy mergeStrategy = MergeStrategy.RESOLVE;
-        final List<Ref> commits = new LinkedList<Ref>();
-        final boolean squash = false;
-
-        RevWalk revWalk = null;
-        DirCacheCheckout dco = null;
-        try {
-            Ref head = repo.getRef( Constants.HEAD );
-            if ( head == null ) {
-                throw new NoHeadException( JGitText.get().commitOnRepoWithoutHEADCurrentlyNotSupported );
-            }
-            final StringBuilder refLogMessage = new StringBuilder( "merge " );
-
-            // Check for FAST_FORWARD, ALREADY_UP_TO_DATE
-            revWalk = new RevWalk( repo );
-
-            // we know for now there is only one commit
-            Ref ref = commits.get( 0 );
-
-            refLogMessage.append( ref.getName() );
-
-            // handle annotated tags
-            ObjectId objectId = ref.getPeeledObjectId();
-            if ( objectId == null ) {
-                objectId = ref.getObjectId();
-            }
-
-            final RevCommit srcCommit = revWalk.lookupCommit( objectId );
-
-            ObjectId headId = head.getObjectId();
-            if ( headId == null ) {
-                revWalk.parseHeaders( srcCommit );
-                dco = new DirCacheCheckout( repo,
-                                            repo.lockDirCache(), srcCommit.getTree() );
-                dco.setFailOnConflict( true );
-                dco.checkout();
-                RefUpdate refUpdate = repo
-                        .updateRef( head.getTarget().getName() );
-                refUpdate.setNewObjectId( objectId );
-                refUpdate.setExpectedOldObjectId( null );
-                refUpdate.setRefLogMessage( "initial pull", false );
-                if ( refUpdate.update() != RefUpdate.Result.NEW ) {
-                    throw new NoHeadException( JGitText.get().commitOnRepoWithoutHEADCurrentlyNotSupported );
-                }
-
-                return new MergeResult( srcCommit, srcCommit, new ObjectId[]{
-                        null, srcCommit }, MergeStatus.FAST_FORWARD,
-                                        mergeStrategy, null, null );
-            }
-
-            final RevCommit headCommit = revWalk.lookupCommit( headId );
-
-            if ( revWalk.isMergedInto( srcCommit, headCommit ) ) {
-                return new MergeResult( headCommit, srcCommit,
-                                        new ObjectId[]{ headCommit, srcCommit },
-                                        ALREADY_UP_TO_DATE, mergeStrategy, null, null );
-            } else if ( revWalk.isMergedInto( headCommit, srcCommit ) ) {
-                // FAST_FORWARD detected: skip doing a real merge but only
-                // update HEAD
-                refLogMessage.append( ": " + FAST_FORWARD );
-                dco = new DirCacheCheckout( repo, headCommit.getTree(), repo.lockDirCache(), srcCommit.getTree() );
-                dco.setFailOnConflict( true );
-                dco.checkout();
-                String msg = null;
-                ObjectId newHead, base = null;
-                final MergeStatus mergeStatus;
-                if ( !squash ) {
-                    updateHead( git, refLogMessage, srcCommit, headId );
-                    newHead = base = srcCommit;
-                    mergeStatus = FAST_FORWARD;
-                } else {
-                    msg = JGitText.get().squashCommitNotUpdatingHEAD;
-                    newHead = base = headId;
-                    mergeStatus = FAST_FORWARD_SQUASHED;
-                    final List<RevCommit> squashedCommits = RevWalkUtils.find( revWalk, srcCommit, headCommit );
-                    final String squashMessage = new SquashMessageFormatter().format( squashedCommits, head );
-                    repo.writeSquashCommitMsg( squashMessage );
-                }
-                return new MergeResult( newHead, base, new ObjectId[]{
-                        headCommit, srcCommit }, mergeStatus, mergeStrategy,
-                                        null, msg );
-            } else {
-                String mergeMessage = "";
-                if ( !squash ) {
-                    mergeMessage = new MergeMessageFormatter().format( commits, head );
-                    repo.writeMergeCommitMsg( mergeMessage );
-                    repo.writeMergeHeads( Arrays.asList( ref.getObjectId() ) );
-                } else {
-                    final List<RevCommit> squashedCommits = RevWalkUtils.find( revWalk, srcCommit, headCommit );
-                    final String squashMessage = new SquashMessageFormatter().format( squashedCommits, head );
-                    repo.writeSquashCommitMsg( squashMessage );
-                }
-                boolean noProblems;
-                final Merger merger = mergeStrategy.newMerger( repo );
-                final Map<String, org.eclipse.jgit.merge.MergeResult<?>> lowLevelResults;
-                final Map<String, ResolveMerger.MergeFailureReason> failingPaths;
-                final List<String> unmergedPaths;
-
-                if ( merger instanceof ResolveMerger ) {
-                    ResolveMerger resolveMerger = (ResolveMerger) merger;
-                    resolveMerger.setCommitNames( new String[]{ "BASE", "HEAD", ref.getName() } );
-                    resolveMerger.setWorkingTreeIterator( new FileTreeIterator( repo ) );
-                    noProblems = merger.merge( headCommit, srcCommit );
-                    lowLevelResults = resolveMerger.getMergeResults();
-                    failingPaths = resolveMerger.getFailingPaths();
-                    unmergedPaths = resolveMerger.getUnmergedPaths();
-                } else {
-                    noProblems = merger.merge( headCommit, srcCommit );
-                    lowLevelResults = emptyMap();
-                    failingPaths = emptyMap();
-                    unmergedPaths = emptyList();
-                }
-
-                refLogMessage.append( ": Merge made by " );
-                refLogMessage.append( mergeStrategy.getName() );
-                refLogMessage.append( '.' );
-                if ( noProblems ) {
-                    dco = new DirCacheCheckout( repo, headCommit.getTree(), repo.lockDirCache(), merger.getResultTreeId() );
-                    dco.setFailOnConflict( true );
-                    dco.checkout();
-
-                    String msg = null;
-                    RevCommit newHead = null;
-                    MergeStatus mergeStatus = null;
-                    if ( !squash ) {
-                        newHead = new Git( repo ).commit().setReflogComment( refLogMessage.toString() ).call();
-                        mergeStatus = MERGED;
-                    } else {
-                        msg = JGitText.get().squashCommitNotUpdatingHEAD;
-                        newHead = headCommit;
-                        mergeStatus = MERGED_SQUASHED;
-                    }
-                    return new MergeResult( newHead.getId(), null,
-                                            new ObjectId[]{ headCommit.getId(), srcCommit.getId() },
-                                            mergeStatus, mergeStrategy, null, msg );
-                } else {
-                    if ( failingPaths != null && !failingPaths.isEmpty() ) {
-                        repo.writeMergeCommitMsg( null );
-                        repo.writeMergeHeads( null );
-                        return new MergeResult( null, merger.getBaseCommit( 0, 1 ),
-                                                new ObjectId[]{ headCommit.getId(), srcCommit.getId() },
-                                                FAILED, mergeStrategy, lowLevelResults, failingPaths, null );
-                    } else {
-                        final String mergeMessageWithConflicts =
-                                new MergeMessageFormatter().formatWithConflicts( mergeMessage, unmergedPaths );
-                        repo.writeMergeCommitMsg( mergeMessageWithConflicts );
-                        return new MergeResult( null, merger.getBaseCommit( 0, 1 ),
-                                                new ObjectId[]{ headCommit.getId(), srcCommit.getId() },
-                                                CONFLICTING, mergeStrategy, lowLevelResults, null );
-                    }
-                }
-            }
-        } catch ( org.eclipse.jgit.errors.CheckoutConflictException e ) {
-            final List<String> conflicts = ( dco == null ) ? Collections.<String>emptyList() : dco.getConflicts();
-            throw new CheckoutConflictException( conflicts, e );
-        } catch ( java.io.IOException e ) {
-            throw new JGitInternalException( MessageFormat.format( JGitText.get().exceptionCaughtDuringExecutionOfMergeCommand, e ), e );
-        } finally {
-            if ( revWalk != null ) {
-                revWalk.release();
-            }
-        }
-    }
-
-    private static void updateHead( final Git git,
-                                    final StringBuilder refLogMessage,
-                                    final ObjectId newHeadId,
-                                    final ObjectId oldHeadID )
-            throws java.io.IOException,
-            ConcurrentRefUpdateException {
-        RefUpdate refUpdate = git.getRepository().updateRef( Constants.HEAD );
-        refUpdate.setNewObjectId( newHeadId );
-        refUpdate.setRefLogMessage( refLogMessage.toString(), false );
-        refUpdate.setExpectedOldObjectId( oldHeadID );
-        RefUpdate.Result rc = refUpdate.update();
-        switch ( rc ) {
-            case NEW:
-            case FAST_FORWARD:
-                return;
-            case REJECTED:
-            case LOCK_FAILURE:
-                throw new ConcurrentRefUpdateException(
-                        JGitText.get().couldNotLockHEAD, refUpdate.getRef(), rc );
-            default:
-                throw new JGitInternalException( MessageFormat.format(
-                        JGitText.get().updatingRefFailed, Constants.HEAD,
-                        newHeadId.toString(), rc ) );
-        }
-    }
+//    public static MergeResult mergeBranches( final Git git,
+//                                             final String source,
+//                                             final String target )
+//            throws Exception {
+//
+//        final Repository repo = git.getRepository();
+//        final MergeStrategy mergeStrategy = MergeStrategy.RESOLVE;
+//        final List<Ref> commits = new LinkedList<Ref>();
+//        final boolean squash = false;
+//
+//        RevWalk revWalk = null;
+//        DirCacheCheckout dco = null;
+//        try {
+//            Ref head = repo.getRef( Constants.HEAD );
+//            if ( head == null ) {
+//                throw new NoHeadException( JGitText.get().commitOnRepoWithoutHEADCurrentlyNotSupported );
+//            }
+//            final StringBuilder refLogMessage = new StringBuilder( "merge " );
+//
+//            // Check for FAST_FORWARD, ALREADY_UP_TO_DATE
+//            revWalk = new RevWalk( repo );
+//
+//            // we know for now there is only one commit
+//            Ref ref = commits.get( 0 );
+//
+//            refLogMessage.append( ref.getName() );
+//
+//            // handle annotated tags
+//            ObjectId objectId = ref.getPeeledObjectId();
+//            if ( objectId == null ) {
+//                objectId = ref.getObjectId();
+//            }
+//
+//            final RevCommit srcCommit = revWalk.lookupCommit( objectId );
+//
+//            ObjectId headId = head.getObjectId();
+//            if ( headId == null ) {
+//                revWalk.parseHeaders( srcCommit );
+//                dco = new DirCacheCheckout( repo,
+//                                            repo.lockDirCache(), srcCommit.getTree() );
+//                dco.setFailOnConflict( true );
+//                dco.checkout();
+//                RefUpdate refUpdate = repo
+//                        .updateRef( head.getTarget().getName() );
+//                refUpdate.setNewObjectId( objectId );
+//                refUpdate.setExpectedOldObjectId( null );
+//                refUpdate.setRefLogMessage( "initial pull", false );
+//                if ( refUpdate.update() != RefUpdate.Result.NEW ) {
+//                    throw new NoHeadException( JGitText.get().commitOnRepoWithoutHEADCurrentlyNotSupported );
+//                }
+//
+//                return new MergeResult( srcCommit, srcCommit, new ObjectId[]{
+//                        null, srcCommit }, MergeStatus.FAST_FORWARD,
+//                                        mergeStrategy, null, null );
+//            }
+//
+//            final RevCommit headCommit = revWalk.lookupCommit( headId );
+//
+//            if ( revWalk.isMergedInto( srcCommit, headCommit ) ) {
+//                return new MergeResult( headCommit, srcCommit,
+//                                        new ObjectId[]{ headCommit, srcCommit },
+//                                        ALREADY_UP_TO_DATE, mergeStrategy, null, null );
+//            } else if ( revWalk.isMergedInto( headCommit, srcCommit ) ) {
+//                // FAST_FORWARD detected: skip doing a real merge but only
+//                // update HEAD
+//                refLogMessage.append( ": " + FAST_FORWARD );
+//                dco = new DirCacheCheckout( repo, headCommit.getTree(), repo.lockDirCache(), srcCommit.getTree() );
+//                dco.setFailOnConflict( true );
+//                dco.checkout();
+//                String msg = null;
+//                ObjectId newHead, base = null;
+//                final MergeStatus mergeStatus;
+//                if ( !squash ) {
+//                    updateHead( git, refLogMessage, srcCommit, headId );
+//                    newHead = base = srcCommit;
+//                    mergeStatus = FAST_FORWARD;
+//                } else {
+//                    msg = JGitText.get().squashCommitNotUpdatingHEAD;
+//                    newHead = base = headId;
+//                    mergeStatus = FAST_FORWARD_SQUASHED;
+//                    final List<RevCommit> squashedCommits = RevWalkUtils.find( revWalk, srcCommit, headCommit );
+//                    final String squashMessage = new SquashMessageFormatter().format( squashedCommits, head );
+//                    repo.writeSquashCommitMsg( squashMessage );
+//                }
+//                return new MergeResult( newHead, base, new ObjectId[]{
+//                        headCommit, srcCommit }, mergeStatus, mergeStrategy,
+//                                        null, msg );
+//            } else {
+//                String mergeMessage = "";
+//                if ( !squash ) {
+//                    mergeMessage = new MergeMessageFormatter().format( commits, head );
+//                    repo.writeMergeCommitMsg( mergeMessage );
+//                    repo.writeMergeHeads( Arrays.asList( ref.getObjectId() ) );
+//                } else {
+//                    final List<RevCommit> squashedCommits = RevWalkUtils.find( revWalk, srcCommit, headCommit );
+//                    final String squashMessage = new SquashMessageFormatter().format( squashedCommits, head );
+//                    repo.writeSquashCommitMsg( squashMessage );
+//                }
+//                boolean noProblems;
+//                final Merger merger = mergeStrategy.newMerger( repo );
+//                final Map<String, org.eclipse.jgit.merge.MergeResult<?>> lowLevelResults;
+//                final Map<String, ResolveMerger.MergeFailureReason> failingPaths;
+//                final List<String> unmergedPaths;
+//
+//                if ( merger instanceof ResolveMerger ) {
+//                    ResolveMerger resolveMerger = (ResolveMerger) merger;
+//                    resolveMerger.setCommitNames( new String[]{ "BASE", "HEAD", ref.getName() } );
+//                    resolveMerger.setWorkingTreeIterator( new FileTreeIterator( repo ) );
+//                    noProblems = merger.merge( headCommit, srcCommit );
+//                    lowLevelResults = resolveMerger.getMergeResults();
+//                    failingPaths = resolveMerger.getFailingPaths();
+//                    unmergedPaths = resolveMerger.getUnmergedPaths();
+//                } else {
+//                    noProblems = merger.merge( headCommit, srcCommit );
+//                    lowLevelResults = emptyMap();
+//                    failingPaths = emptyMap();
+//                    unmergedPaths = emptyList();
+//                }
+//
+//                refLogMessage.append( ": Merge made by " );
+//                refLogMessage.append( mergeStrategy.getName() );
+//                refLogMessage.append( '.' );
+//                if ( noProblems ) {
+//                    dco = new DirCacheCheckout( repo, headCommit.getTree(), repo.lockDirCache(), merger.getResultTreeId() );
+//                    dco.setFailOnConflict( true );
+//                    dco.checkout();
+//
+//                    String msg = null;
+//                    RevCommit newHead = null;
+//                    MergeStatus mergeStatus = null;
+//                    if ( !squash ) {
+//                        newHead = new Git( repo ).commit().setReflogComment( refLogMessage.toString() ).call();
+//                        mergeStatus = MERGED;
+//                    } else {
+//                        msg = JGitText.get().squashCommitNotUpdatingHEAD;
+//                        newHead = headCommit;
+//                        mergeStatus = MERGED_SQUASHED;
+//                    }
+//                    return new MergeResult( newHead.getId(), null,
+//                                            new ObjectId[]{ headCommit.getId(), srcCommit.getId() },
+//                                            mergeStatus, mergeStrategy, null, msg );
+//                } else {
+//                    if ( failingPaths != null && !failingPaths.isEmpty() ) {
+//                        repo.writeMergeCommitMsg( null );
+//                        repo.writeMergeHeads( null );
+//                        return new MergeResult( null, merger.getBaseCommit( 0, 1 ),
+//                                                new ObjectId[]{ headCommit.getId(), srcCommit.getId() },
+//                                                FAILED, mergeStrategy, lowLevelResults, failingPaths, null );
+//                    } else {
+//                        final String mergeMessageWithConflicts =
+//                                new MergeMessageFormatter().formatWithConflicts( mergeMessage, unmergedPaths );
+//                        repo.writeMergeCommitMsg( mergeMessageWithConflicts );
+//                        return new MergeResult( null, merger.getBaseCommit( 0, 1 ),
+//                                                new ObjectId[]{ headCommit.getId(), srcCommit.getId() },
+//                                                CONFLICTING, mergeStrategy, lowLevelResults, null );
+//                    }
+//                }
+//            }
+//        } catch ( org.eclipse.jgit.errors.CheckoutConflictException e ) {
+//            final List<String> conflicts = ( dco == null ) ? Collections.<String>emptyList() : dco.getConflicts();
+//            throw new CheckoutConflictException( conflicts, e );
+//        } catch ( java.io.IOException e ) {
+//            throw new JGitInternalException( MessageFormat.format( JGitText.get().exceptionCaughtDuringExecutionOfMergeCommand, e ), e );
+//        } finally {
+//            if ( revWalk != null ) {
+//                revWalk.release();
+//            }
+//        }
+//    }
+//
+//    private static void updateHead( final Git git,
+//                                    final StringBuilder refLogMessage,
+//                                    final ObjectId newHeadId,
+//                                    final ObjectId oldHeadID )
+//            throws java.io.IOException,
+//            ConcurrentRefUpdateException {
+//        RefUpdate refUpdate = git.getRepository().updateRef( Constants.HEAD );
+//        refUpdate.setNewObjectId( newHeadId );
+//        refUpdate.setRefLogMessage( refLogMessage.toString(), false );
+//        refUpdate.setExpectedOldObjectId( oldHeadID );
+//        RefUpdate.Result rc = refUpdate.update();
+//        switch ( rc ) {
+//            case NEW:
+//            case FAST_FORWARD:
+//                return;
+//            case REJECTED:
+//            case LOCK_FAILURE:
+//                throw new ConcurrentRefUpdateException(
+//                        JGitText.get().couldNotLockHEAD, refUpdate.getRef(), rc );
+//            default:
+//                throw new JGitInternalException( MessageFormat.format(
+//                        JGitText.get().updatingRefFailed, Constants.HEAD,
+//                        newHeadId.toString(), rc ) );
+//        }
+//    }
 
     public static class JGitPathInfo {
 

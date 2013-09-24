@@ -44,7 +44,7 @@ public class JGitUtilTest extends AbstractTestInfra {
 
         assertThat( branchList( git ).size() ).isEqualTo( 0 );
 
-        commit( git, "master", "name", "name@example.com", "commit", null, null, new HashMap<String, File>() {{
+        commit( git, "master", "name", "name@example.com", "commit", null, null, false, new HashMap<String, File>() {{
             put( "file.txt", tempFile( "temp" ) );
         }} );
 
@@ -58,13 +58,13 @@ public class JGitUtilTest extends AbstractTestInfra {
 
         final Git origin = JGitUtil.newRepository( gitFolder, true );
 
-        commit( origin, "user_branch", "name", "name@example.com", "commit!", null, null, new HashMap<String, File>() {{
+        commit( origin, "user_branch", "name", "name@example.com", "commit!", null, null, false, new HashMap<String, File>() {{
             put( "file2.txt", tempFile( "temp2222" ) );
         }} );
-        commit( origin, "master", "name", "name@example.com", "commit", null, null, new HashMap<String, File>() {{
+        commit( origin, "master", "name", "name@example.com", "commit", null, null, false, new HashMap<String, File>() {{
             put( "file.txt", tempFile( "temp" ) );
         }} );
-        commit( origin, "master", "name", "name@example.com", "commit", null, null, new HashMap<String, File>() {{
+        commit( origin, "master", "name", "name@example.com", "commit", null, null, false, new HashMap<String, File>() {{
             put( "file3.txt", tempFile( "temp3" ) );
         }} );
 
@@ -89,10 +89,10 @@ public class JGitUtilTest extends AbstractTestInfra {
 
         final Git origin = JGitUtil.newRepository( gitFolder, true );
 
-        commit( origin, "user_branch", "name", "name@example.com", "commit!", null, null, new HashMap<String, File>() {{
+        commit( origin, "user_branch", "name", "name@example.com", "commit!", null, null, false, new HashMap<String, File>() {{
             put( "path/to/file2.txt", tempFile( "temp2222" ) );
         }} );
-        commit( origin, "user_branch", "name", "name@example.com", "commit!", null, null, new HashMap<String, File>() {{
+        commit( origin, "user_branch", "name", "name@example.com", "commit!", null, null, false, new HashMap<String, File>() {{
             put( "path/to/file3.txt", tempFile( "temp2222" ) );
         }} );
 
@@ -103,6 +103,30 @@ public class JGitUtilTest extends AbstractTestInfra {
         assertThat( JGitUtil.checkPath( git, "user_branch", "pathx/" ).getK1() ).isEqualTo( NOT_FOUND );
         assertThat( JGitUtil.checkPath( git, "user_branch", "path/to/file2.txt" ).getK1() ).isEqualTo( FILE );
         assertThat( JGitUtil.checkPath( git, "user_branch", "path/to" ).getK1() ).isEqualTo( DIRECTORY );
+    }
+
+    @Test
+    public void testAmend() throws IOException {
+        final File parentFolder = createTempDirectory();
+        System.out.println("COOL!:" + parentFolder.toString());
+        final File gitFolder = new File( parentFolder, "myxxxtest.git" );
+
+        final Git origin = JGitUtil.newRepository( gitFolder, true );
+
+        commit( origin, "master", "name", "name@example.com", "commit!", null, null, false, new HashMap<String, File>() {{
+            put( "path/to/file2.txt", tempFile( "tempwdf sdf asdf asd2222" ) );
+        }} );
+        commit( origin, "master", "name", "name@example.com", "commit!", null, null, true, new HashMap<String, File>() {{
+            put( "path/to/file3.txt", tempFile( "temp2x d dasdf asdf 222" ) );
+        }} );
+
+        final File gitClonedFolder = new File( parentFolder, "myclone.git" );
+
+        final Git git = cloneRepository( gitClonedFolder, origin.getRepository().getDirectory().toString(), true, CredentialsProvider.getDefault() );
+
+        assertThat( JGitUtil.checkPath( git, "master", "pathx/" ).getK1() ).isEqualTo( NOT_FOUND );
+        assertThat( JGitUtil.checkPath( git, "master", "path/to/file2.txt" ).getK1() ).isEqualTo( FILE );
+        assertThat( JGitUtil.checkPath( git, "master", "path/to" ).getK1() ).isEqualTo( DIRECTORY );
     }
 
 }

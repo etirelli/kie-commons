@@ -26,12 +26,13 @@ import java.util.Random;
 
 import org.junit.Before;
 import org.junit.Test;
+import org.kie.commons.java.nio.base.version.VersionAttributeView;
 import org.kie.commons.java.nio.file.FileSystem;
 import org.kie.commons.java.nio.file.Path;
 import org.kie.commons.java.nio.file.attribute.FileAttribute;
 
 import static org.junit.Assert.*;
-import static org.kie.commons.io.FileSystemType.Bootstrap.BOOTSTRAP_INSTANCE;
+import static org.kie.commons.io.FileSystemType.Bootstrap.*;
 
 /**
  *
@@ -50,7 +51,7 @@ public class GitIOServiceDotFileTest extends CommonIOExceptionsServiceDotFileTes
 
     @Override
     protected int testFileAttrSize2() {
-        return 13;
+        return 12;
     }
 
     @Override

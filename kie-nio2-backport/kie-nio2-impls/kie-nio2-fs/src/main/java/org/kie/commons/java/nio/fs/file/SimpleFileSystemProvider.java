@@ -37,6 +37,7 @@ import org.apache.commons.io.FileUtils;
 import org.kie.commons.java.nio.IOException;
 import org.kie.commons.java.nio.base.BasicFileAttributesImpl;
 import org.kie.commons.java.nio.base.ExtendedAttributeView;
+import org.kie.commons.java.nio.base.FileSystemState;
 import org.kie.commons.java.nio.base.GeneralPathImpl;
 import org.kie.commons.java.nio.base.SeekableByteChannelFileBasedImpl;
 import org.kie.commons.java.nio.channels.AsynchronousFileChannel;
@@ -45,6 +46,7 @@ import org.kie.commons.java.nio.file.AccessDeniedException;
 import org.kie.commons.java.nio.file.AccessMode;
 import org.kie.commons.java.nio.file.AtomicMoveNotSupportedException;
 import org.kie.commons.java.nio.file.CopyOption;
+import org.kie.commons.java.nio.file.DeleteOption;
 import org.kie.commons.java.nio.file.DirectoryNotEmptyException;
 import org.kie.commons.java.nio.file.DirectoryStream;
 import org.kie.commons.java.nio.file.FileAlreadyExistsException;
@@ -58,6 +60,7 @@ import org.kie.commons.java.nio.file.NotDirectoryException;
 import org.kie.commons.java.nio.file.NotLinkException;
 import org.kie.commons.java.nio.file.OpenOption;
 import org.kie.commons.java.nio.file.Path;
+import org.kie.commons.java.nio.file.StandardDeleteOption;
 import org.kie.commons.java.nio.file.attribute.BasicFileAttributeView;
 import org.kie.commons.java.nio.file.attribute.BasicFileAttributes;
 import org.kie.commons.java.nio.file.attribute.FileAttribute;
@@ -71,9 +74,10 @@ public class SimpleFileSystemProvider implements FileSystemProvider {
 
     private static final String USER_DIR = "user.dir";
     private final BaseSimpleFileSystem fileSystem;
-    private       boolean              isDefault;
-    private final OSType               osType;
-    private final File[]               roots;
+    private boolean isDefault;
+    private final OSType osType;
+    private final File[] roots;
+    private FileSystemState state = FileSystemState.NORMAL;
 
     enum OSType {
         WINDOWS, UNIX_LIKE;
@@ -100,6 +104,7 @@ public class SimpleFileSystemProvider implements FileSystemProvider {
         } else {
             this.fileSystem = new SimpleUnixFileSystem( this, defaultPath );
         }
+        this.state = FileSystemState.NORMAL;
     }
 
     @Override
@@ -364,29 +369,55 @@ public class SimpleFileSystemProvider implements FileSystemProvider {
     }
 
     @Override
-    public void delete( final Path path ) throws NoSuchFileException, DirectoryNotEmptyException, IOException, SecurityException {
+    public void delete( final Path path,
+                        final DeleteOption... options ) throws NoSuchFileException, DirectoryNotEmptyException, IOException, SecurityException {
         checkNotNull( "path", path );
 
         if ( !path.toFile().exists() ) {
             throw new NoSuchFileException( path.toString() );
         }
 
-        deleteIfExists( path );
+        deleteIfExists( path, options );
     }
 
     @Override
-    public boolean deleteIfExists( final Path path ) throws DirectoryNotEmptyException, IOException, SecurityException {
+    public boolean deleteIfExists( final Path path,
+                                   final DeleteOption... options )
+            throws DirectoryNotEmptyException, IOException, SecurityException {
         checkNotNull( "path", path );
-        final File file = path.toFile();
-        try {
-            if ( file.isDirectory() && file.list().length > 0 ) {
-                throw new DirectoryNotEmptyException( path.toString() );
-            }
+        synchronized ( this ) {
 
-            return file.delete();
-        } finally {
-            toGeneralPathImpl( path ).clearCache();
+            final File file = path.toFile();
+            try {
+                if ( file.isDirectory() && !deleteNonEmptyDirectory( options ) && file.list().length > 0 ) {
+                    throw new DirectoryNotEmptyException( path.toString() );
+                }
+
+                final boolean result = file.exists();
+
+                try {
+                    FileUtils.forceDelete( file );
+                } catch ( final FileNotFoundException ignore ) {
+                } catch ( java.io.IOException e ) {
+                    throw new IOException( e );
+                }
+
+                return result;
+            } finally {
+                toGeneralPathImpl( path ).clearCache();
+            }
         }
+    }
+
+    private boolean deleteNonEmptyDirectory( final DeleteOption... options ) {
+
+        for ( final DeleteOption option : options ) {
+            if ( option.equals( StandardDeleteOption.NON_EMPTY_DIRECTORIES ) ) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     @Override
@@ -551,6 +582,16 @@ public class SimpleFileSystemProvider implements FileSystemProvider {
             throws UnsupportedOperationException, IllegalArgumentException, ClassCastException, IOException, SecurityException {
         checkNotNull( "path", path );
         checkNotEmpty( "attributes", attribute );
+
+        if ( attribute.equals( FileSystemState.FILE_SYSTEM_STATE_ATTR ) ) {
+            try {
+                state = FileSystemState.valueOf( value.toString() );
+                FileSystemState.valueOf( value.toString() );
+            } catch ( final Exception ex ) {
+                state = FileSystemState.NORMAL;
+            }
+            return;
+        }
 
         final String[] s = split( attribute );
         if ( s[ 0 ].length() == 0 ) {

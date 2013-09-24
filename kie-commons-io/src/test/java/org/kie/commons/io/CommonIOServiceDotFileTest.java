@@ -28,6 +28,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.io.FileUtils;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -116,12 +117,9 @@ public abstract class CommonIOServiceDotFileTest {
         assertEquals( dateValue, attrs.get( "custom" ) );
         assertEquals( "world", attrs.get( "int.hello" ) );
 
-        ioService().setAttribute( path, "my_new_key", "value" );
-
         final Map<String, Object> attrsValue = ioService().readAttributes( path );
 
         assertEquals( testFileAttrSize2(), attrsValue.size() );
-        assertTrue( attrsValue.containsKey( "my_new_key" ) );
 
         ioService().setAttributes( path, new FileAttribute<Object>() {
             @Override
@@ -213,20 +211,6 @@ public abstract class CommonIOServiceDotFileTest {
         assertEquals( 10, attrs.get( "int" ) );
         assertEquals( dateValue, attrs.get( "custom" ) );
         assertEquals( "world", attrs.get( "int.hello" ) );
-
-        ioService().setAttribute( path, "my_new_key", "value" );
-
-        final Map<String, Object> attrsValue = ioService().readAttributes( path );
-
-        assertEquals( testDirectoryAttrSize2(), attrsValue.size() );
-        assertTrue( attrsValue.containsKey( "my_new_key" ) );
-
-        ioService().setAttribute( path, "my_new_key", null );
-
-        final Map<String, Object> attrsValue2 = ioService().readAttributes( path );
-
-        assertEquals( testDirectoryAttrSize3(), attrsValue2.size() );
-        assertFalse( attrsValue2.containsKey( "my_new_key" ) );
 
         ioService().delete( path );
 
@@ -674,7 +658,7 @@ public abstract class CommonIOServiceDotFileTest {
     @BeforeClass
     public static void cleanup() {
         for ( final File tempFile : tempFiles ) {
-//            FileUtils.deleteQuietly( tempFile );
+            FileUtils.deleteQuietly( tempFile );
         }
     }
 

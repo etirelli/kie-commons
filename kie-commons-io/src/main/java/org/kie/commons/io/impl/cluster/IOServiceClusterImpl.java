@@ -29,6 +29,7 @@ import org.kie.commons.java.nio.base.SeekableByteChannelWrapperImpl;
 import org.kie.commons.java.nio.channels.SeekableByteChannel;
 import org.kie.commons.java.nio.file.AtomicMoveNotSupportedException;
 import org.kie.commons.java.nio.file.CopyOption;
+import org.kie.commons.java.nio.file.DeleteOption;
 import org.kie.commons.java.nio.file.DirectoryNotEmptyException;
 import org.kie.commons.java.nio.file.DirectoryStream;
 import org.kie.commons.java.nio.file.FileAlreadyExistsException;
@@ -169,10 +170,12 @@ public class IOServiceClusterImpl implements IOService {
     @Override
     public void startBatch( final Option... options ) {
         clusterService.lock();
+        service.startBatch( options );
     }
 
     @Override
     public void endBatch( final Option... options ) {
+        service.endBatch( options );
         clusterService.unlock();
     }
 
@@ -357,22 +360,24 @@ public class IOServiceClusterImpl implements IOService {
     }
 
     @Override
-    public void delete( final Path path ) throws IllegalArgumentException, NoSuchFileException, DirectoryNotEmptyException, IOException, SecurityException {
+    public void delete( final Path path,
+                        final DeleteOption... options ) throws IllegalArgumentException, NoSuchFileException, DirectoryNotEmptyException, IOException, SecurityException {
         new FileSystemSyncLock<Void>( path.getFileSystem() ).execute( clusterService, new FutureTask<Void>( new Callable<Void>() {
             @Override
             public Void call() throws Exception {
-                service.delete( path );
+                service.delete( path, options );
                 return null;
             }
         } ) );
     }
 
     @Override
-    public boolean deleteIfExists( final Path path ) throws IllegalArgumentException, DirectoryNotEmptyException, IOException, SecurityException {
+    public boolean deleteIfExists( final Path path,
+                                   final DeleteOption... options ) throws IllegalArgumentException, DirectoryNotEmptyException, IOException, SecurityException {
         return new FileSystemSyncLock<Boolean>( path.getFileSystem() ).execute( clusterService, new FutureTask<Boolean>( new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
-                return service.deleteIfExists( path );
+                return service.deleteIfExists( path, options );
             }
         } ) );
     }

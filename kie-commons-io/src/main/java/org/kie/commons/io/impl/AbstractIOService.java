@@ -35,8 +35,10 @@ import java.util.Set;
 
 import org.kie.commons.io.FileSystemType;
 import org.kie.commons.io.IOService;
+import org.kie.commons.io.impl.lock.ThreadLockServiceImpl;
 import org.kie.commons.java.nio.IOException;
 import org.kie.commons.java.nio.base.AbstractPath;
+import org.kie.commons.java.nio.base.FileSystemState;
 import org.kie.commons.java.nio.channels.SeekableByteChannel;
 import org.kie.commons.java.nio.file.CopyOption;
 import org.kie.commons.java.nio.file.DirectoryNotEmptyException;
@@ -50,12 +52,14 @@ import org.kie.commons.java.nio.file.Files;
 import org.kie.commons.java.nio.file.NoSuchFileException;
 import org.kie.commons.java.nio.file.NotDirectoryException;
 import org.kie.commons.java.nio.file.OpenOption;
+import org.kie.commons.java.nio.file.Option;
 import org.kie.commons.java.nio.file.Path;
 import org.kie.commons.java.nio.file.Paths;
 import org.kie.commons.java.nio.file.ProviderNotFoundException;
 import org.kie.commons.java.nio.file.StandardOpenOption;
 import org.kie.commons.java.nio.file.attribute.FileAttribute;
 import org.kie.commons.java.nio.file.attribute.FileTime;
+import org.kie.commons.lock.LockService;
 
 import static org.kie.commons.java.nio.file.StandardOpenOption.*;
 
@@ -74,8 +78,36 @@ public abstract class AbstractIOService implements IOService {
         }
     };
 
+    protected final LockService lockService;
     protected final Map<FileSystemType, List<FileSystem>> fileSystems = new HashMap<FileSystemType, List<FileSystem>>();
+
     protected NewFileSystemListener newFileSystemListener = null;
+
+    public AbstractIOService() {
+        lockService = new ThreadLockServiceImpl();
+    }
+
+    public AbstractIOService( final LockService lockService ) {
+        this.lockService = lockService;
+    }
+
+    @Override
+    public void startBatch( final Option... options ) {
+        lockService.lock();
+        if ( !fileSystems.isEmpty() ) {
+            final Path path = fileSystems.values().iterator().next().get( 0 ).getRootDirectories().iterator().next();
+            setAttribute( path, FileSystemState.FILE_SYSTEM_STATE_ATTR, FileSystemState.BATCH );
+        }
+    }
+
+    @Override
+    public void endBatch( final Option... options ) {
+        lockService.unlock();
+        if ( !fileSystems.isEmpty() ) {
+            final Path path = fileSystems.values().iterator().next().get( 0 ).getRootDirectories().iterator().next();
+            setAttribute( path, FileSystemState.FILE_SYSTEM_STATE_ATTR, FileSystemState.NORMAL );
+        }
+    }
 
     @Override
     public Path get( final String first,
@@ -282,6 +314,15 @@ public abstract class AbstractIOService implements IOService {
             throws UnsupportedOperationException, NoSuchFileException, IllegalArgumentException,
             IOException, SecurityException {
         return readAttributes( path, "*" );
+    }
+
+    @Override
+    public Path setAttribute( final Path path,
+                              final String attribute,
+                              final Object value )
+            throws UnsupportedOperationException, IllegalArgumentException, ClassCastException, IOException, SecurityException {
+        Files.setAttribute( path, attribute, value );
+        return path;
     }
 
     @Override

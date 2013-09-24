@@ -67,6 +67,7 @@ import org.kie.commons.data.Pair;
 import org.kie.commons.java.nio.IOException;
 import org.kie.commons.java.nio.base.BasicFileAttributesImpl;
 import org.kie.commons.java.nio.base.ExtendedAttributeView;
+import org.kie.commons.java.nio.base.FileSystemState;
 import org.kie.commons.java.nio.base.SeekableByteChannelFileBasedImpl;
 import org.kie.commons.java.nio.base.dotfiles.DotFileOption;
 import org.kie.commons.java.nio.base.options.CommentedOption;
@@ -78,6 +79,7 @@ import org.kie.commons.java.nio.file.AccessDeniedException;
 import org.kie.commons.java.nio.file.AccessMode;
 import org.kie.commons.java.nio.file.AtomicMoveNotSupportedException;
 import org.kie.commons.java.nio.file.CopyOption;
+import org.kie.commons.java.nio.file.DeleteOption;
 import org.kie.commons.java.nio.file.DirectoryNotEmptyException;
 import org.kie.commons.java.nio.file.DirectoryStream;
 import org.kie.commons.java.nio.file.FileAlreadyExistsException;
@@ -92,6 +94,7 @@ import org.kie.commons.java.nio.file.NotLinkException;
 import org.kie.commons.java.nio.file.OpenOption;
 import org.kie.commons.java.nio.file.Path;
 import org.kie.commons.java.nio.file.StandardCopyOption;
+import org.kie.commons.java.nio.file.StandardDeleteOption;
 import org.kie.commons.java.nio.file.StandardOpenOption;
 import org.kie.commons.java.nio.file.StandardWatchEventKind;
 import org.kie.commons.java.nio.file.WatchEvent;
@@ -141,6 +144,9 @@ public class JGitFileSystemProvider implements FileSystemProvider {
     public static final int DEFAULT_SCHEME_SIZE = ( "default://" ).length();
 
     private Daemon deamonService = null;
+    private FileSystemState state = FileSystemState.NORMAL;
+    private boolean hadCommitOnBatchState = false;
+
     private final Map<String, JGitFileSystem> fileSystems = new ConcurrentHashMap<String, JGitFileSystem>();
     private final Set<JGitFileSystem> closedFileSystems = new HashSet<JGitFileSystem>();
     private final Map<Repository, JGitFileSystem> repoIndex = new ConcurrentHashMap<Repository, JGitFileSystem>();
@@ -617,9 +623,10 @@ public class JGitFileSystemProvider implements FileSystemProvider {
                         }
                     }
 
-                    commit( gPath.getFileSystem().gitRepo(), gPath.getRefTree(), name, email, message, timeZone, when, new HashMap<String, File>() {{
+                    commit( gPath.getFileSystem().gitRepo(), gPath.getRefTree(), name, email, message, timeZone, when, amend(), new HashMap<String, File>() {{
                         put( gPath.getPath(), file );
                     }} );
+                    checkAmend();
                 }
             };
         } catch ( java.io.IOException e ) {
@@ -699,12 +706,13 @@ public class JGitFileSystemProvider implements FileSystemProvider {
 
                     final File dotfile = tempDot;
 
-                    commit( gPath.getFileSystem().gitRepo(), gPath.getRefTree(), name, email, message, timeZone, when, new HashMap<String, File>() {{
+                    commit( gPath.getFileSystem().gitRepo(), gPath.getRefTree(), name, email, message, timeZone, when, amend(), new HashMap<String, File>() {{
                         put( gPath.getPath(), file );
                         if ( dotfile != null ) {
                             put( toPathImpl( dot( gPath ) ).getPath(), dotfile );
                         }
                     }} );
+                    checkAmend();
                 }
             };
         } catch ( java.io.IOException e ) {
@@ -712,11 +720,11 @@ public class JGitFileSystemProvider implements FileSystemProvider {
         }
     }
 
-    private boolean exists( final Path path ) {
+    protected boolean exists( final Path path ) {
         try {
             readAttributes( path, BasicFileAttributes.class );
             return true;
-        } catch ( final Exception ex ) {
+        } catch ( final Exception ignored ) {
         }
         return false;
     }
@@ -864,7 +872,8 @@ public class JGitFileSystemProvider implements FileSystemProvider {
     }
 
     @Override
-    public void delete( final Path path )
+    public void delete( final Path path,
+                        final DeleteOption... options )
             throws DirectoryNotEmptyException, NoSuchFileException, IOException, SecurityException {
         checkNotNull( "path", path );
 
@@ -880,7 +889,7 @@ public class JGitFileSystemProvider implements FileSystemProvider {
             return;
         }
 
-        deleteAsset( gPath );
+        deleteAsset( gPath, options );
     }
 
     private boolean deleteRepo( final FileSystem fileSystem ) {
@@ -897,14 +906,19 @@ public class JGitFileSystemProvider implements FileSystemProvider {
         }
     }
 
-    public void deleteAsset( final JGitPathImpl path ) {
+    public void deleteAsset( final JGitPathImpl path,
+                             final DeleteOption... options ) {
         final Pair<PathType, ObjectId> result = checkPath( path.getFileSystem().gitRepo(), path.getRefTree(), path.getPath() );
 
         if ( result.getK1().equals( PathType.DIRECTORY ) ) {
+            if ( deleteNonEmptyDirectory( options ) ) {
+                deleteResource( path, options );
+                return;
+            }
             final List<JGitPathInfo> content = listPathContent( path.getFileSystem().gitRepo(), path.getRefTree(), path.getPath() );
             if ( content.size() == 1 && content.get( 0 ).getPath().equals( path.getPath().substring( 1 ) + "/.gitignore" ) ) {
                 delete( path.resolve( ".gitignore" ) );
-                JGitUtil.delete( path.getFileSystem().gitRepo(), path.getRefTree(), path.getPath(), null, null, "delete {" + path.getPath() + "}", null, null );
+                deleteResource( path, options );
                 return;
             }
             throw new DirectoryNotEmptyException( path.toString() );
@@ -914,7 +928,44 @@ public class JGitFileSystemProvider implements FileSystemProvider {
             throw new NoSuchFileException( path.toString() );
         }
 
-        JGitUtil.delete( path.getFileSystem().gitRepo(), path.getRefTree(), path.getPath(), null, null, "delete {" + path.getPath() + "}", null, null );
+        deleteResource( path, options );
+    }
+
+    void deleteResource( final JGitPathImpl path,
+                         final DeleteOption... options ) {
+        String name = null;
+        String email = null;
+        String message = "delete {" + path.getPath() + "}";
+        TimeZone timeZone = null;
+        Date when = null;
+
+        if ( options != null && options.length > 0 ) {
+            for ( final DeleteOption option : options ) {
+                if ( option instanceof CommentedOption ) {
+                    final CommentedOption op = (CommentedOption) option;
+                    name = op.getName();
+                    email = op.getEmail();
+                    message = op.getMessage();
+                    timeZone = op.getTimeZone();
+                    when = op.getWhen();
+                    break;
+                }
+            }
+        }
+
+        JGitUtil.delete( path.getFileSystem().gitRepo(), path.getRefTree(), path.getPath(), name, email, message, timeZone, when, amend() );
+        checkAmend();
+    }
+
+    private boolean deleteNonEmptyDirectory( final DeleteOption... options ) {
+
+        for ( final DeleteOption option : options ) {
+            if ( option.equals( StandardDeleteOption.NON_EMPTY_DIRECTORIES ) ) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public void deleteBranch( final JGitPathImpl path ) {
@@ -928,7 +979,8 @@ public class JGitFileSystemProvider implements FileSystemProvider {
     }
 
     @Override
-    public boolean deleteIfExists( final Path path )
+    public boolean deleteIfExists( final Path path,
+                                   final DeleteOption... options )
             throws DirectoryNotEmptyException, IOException, SecurityException {
         checkNotNull( "path", path );
 
@@ -942,7 +994,7 @@ public class JGitFileSystemProvider implements FileSystemProvider {
             return deleteBranchIfExists( gPath );
         }
 
-        return deleteAssetIfExists( gPath );
+        return deleteAssetIfExists( gPath, options );
     }
 
     public boolean deleteBranchIfExists( final JGitPathImpl path ) {
@@ -956,10 +1008,15 @@ public class JGitFileSystemProvider implements FileSystemProvider {
         return true;
     }
 
-    public boolean deleteAssetIfExists( final JGitPathImpl path ) {
+    public boolean deleteAssetIfExists( final JGitPathImpl path,
+                                        final DeleteOption... options ) {
         final Pair<PathType, ObjectId> result = checkPath( path.getFileSystem().gitRepo(), path.getRefTree(), path.getPath() );
 
         if ( result.getK1().equals( PathType.DIRECTORY ) ) {
+            if ( deleteNonEmptyDirectory( options ) ) {
+                deleteResource( path, options );
+                return true;
+            }
             final List<JGitPathInfo> content = listPathContent( path.getFileSystem().gitRepo(), path.getRefTree(), path.getPath() );
             if ( content.size() == 1 && content.get( 0 ).getPath().equals( path.getPath().substring( 1 ) + "/.gitignore" ) ) {
                 delete( path.resolve( ".gitignore" ) );
@@ -972,8 +1029,13 @@ public class JGitFileSystemProvider implements FileSystemProvider {
             return false;
         }
 
-        JGitUtil.delete( path.getFileSystem().gitRepo(), path.getRefTree(), path.getPath(), null, null, "delete {" + path.getPath() + "}", null, null );
+        deleteResource( path, options );
         return true;
+    }
+
+    private String deleteCommitMessage( final String path,
+                                        final DeleteOption... options ) {
+        return "delete {" + path + "}";
     }
 
     @Override
@@ -1318,6 +1380,17 @@ public class JGitFileSystemProvider implements FileSystemProvider {
         checkNotNull( "path", path );
         checkNotEmpty( "attributes", attribute );
 
+        if ( attribute.equals( FileSystemState.FILE_SYSTEM_STATE_ATTR ) ) {
+            try {
+                state = FileSystemState.valueOf( value.toString() );
+                FileSystemState.valueOf( value.toString() );
+            } catch ( final Exception ex ) {
+                state = FileSystemState.NORMAL;
+            }
+            hadCommitOnBatchState = false;
+            return;
+        }
+
         final String[] s = split( attribute );
         if ( s[ 0 ].length() == 0 ) {
             throw new IllegalArgumentException( attribute );
@@ -1346,6 +1419,16 @@ public class JGitFileSystemProvider implements FileSystemProvider {
             }
         }
 
+    }
+
+    private void checkAmend() {
+        if ( state == FileSystemState.BATCH && !hadCommitOnBatchState ) {
+            hadCommitOnBatchState = true;
+        }
+    }
+
+    private boolean amend() {
+        return state == FileSystemState.BATCH && hadCommitOnBatchState;
     }
 
     private String extractHost( final URI uri ) {

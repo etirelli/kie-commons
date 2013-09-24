@@ -58,8 +58,8 @@ import static org.kie.commons.validation.Preconditions.*;
 public final class Files {
 
     //TODO remove it
-    private static       File BASE_TEMP_DIR = new File( System.getProperty( "java.io.tmpdir" ) );
-    private static final Path TEMP_PATH     = Paths.get( BASE_TEMP_DIR.toURI() );
+    private static File BASE_TEMP_DIR = new File( System.getProperty( "java.io.tmpdir" ) );
+    private static final Path TEMP_PATH = Paths.get( BASE_TEMP_DIR.toURI() );
 
     private static final Set<StandardOpenOption> CREATE_NEW_FILE_OPTIONS = EnumSet.of( StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE );
 
@@ -346,12 +346,13 @@ public final class Files {
      * @throws SecurityException
      * @see <a href="http://docs.oracle.com/javase/7/docs/api/java/nio/file/Files.html#delete(java.nio.file.Path)">Original JavaDoc</a>
      */
-    public static void delete( final Path path )
+    public static void delete( final Path path,
+                               final DeleteOption... options )
             throws IllegalArgumentException, NoSuchFileException,
             DirectoryNotEmptyException, IOException, SecurityException {
         checkNotNull( "path", path );
 
-        providerOf( path ).delete( path );
+        providerOf( path ).delete( path, options );
     }
 
     /**
@@ -361,11 +362,12 @@ public final class Files {
      * @throws SecurityException
      * @see <a href="http://docs.oracle.com/javase/7/docs/api/java/nio/file/Files.html#deleteIfExists(java.nio.file.Path)">Original JavaDoc</a>
      */
-    public static boolean deleteIfExists( final Path path )
+    public static boolean deleteIfExists( final Path path,
+                                          final DeleteOption... options )
             throws IllegalArgumentException, DirectoryNotEmptyException, IOException, SecurityException {
         checkNotNull( "path", path );
 
-        return providerOf( path ).deleteIfExists( path );
+        return providerOf( path ).deleteIfExists( path, options );
     }
 
     //temp implemantation are based on google's guava lib

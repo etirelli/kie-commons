@@ -49,7 +49,7 @@ public abstract class AbstractTestInfra {
 
         final Git git = Git.init().setBare( true ).setDirectory( tempDir ).call();
 
-        commit( git, "master", "name", "name@example.com", "cool1", null, null, new HashMap<String, File>() {{
+        commit( git, "master", "name", "name@example.com", "cool1", null, null, false, new HashMap<String, File>() {{
             put( "file1.txt", tempFile( "content" ) );
             put( "file2.txt", tempFile( "content2" ) );
         }} );

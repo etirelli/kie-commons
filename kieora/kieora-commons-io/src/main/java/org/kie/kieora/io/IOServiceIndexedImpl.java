@@ -35,6 +35,7 @@ import org.kie.commons.java.nio.base.Properties;
 import org.kie.commons.java.nio.channels.SeekableByteChannel;
 import org.kie.commons.java.nio.file.AtomicMoveNotSupportedException;
 import org.kie.commons.java.nio.file.CopyOption;
+import org.kie.commons.java.nio.file.DeleteOption;
 import org.kie.commons.java.nio.file.DirectoryNotEmptyException;
 import org.kie.commons.java.nio.file.FileAlreadyExistsException;
 import org.kie.commons.java.nio.file.FileSystem;
@@ -49,6 +50,7 @@ import org.kie.commons.java.nio.file.WatchEvent;
 import org.kie.commons.java.nio.file.WatchService;
 import org.kie.commons.java.nio.file.attribute.FileAttribute;
 import org.kie.commons.java.nio.file.attribute.FileAttributeView;
+import org.kie.commons.lock.LockService;
 import org.kie.kieora.engine.MetaIndexEngine;
 
 import static org.kie.commons.java.nio.base.dotfiles.DotFileUtils.*;
@@ -66,6 +68,15 @@ public class IOServiceIndexedImpl extends IOServiceDotFileImpl {
 
     public IOServiceIndexedImpl( final MetaIndexEngine indexEngine,
                                  Class<? extends FileAttributeView>... views ) {
+        this.indexEngine = checkNotNull( "indexEngine", indexEngine );
+        this.batchIndex = new BatchIndex( indexEngine, this, views );
+        this.views = views;
+    }
+
+    public IOServiceIndexedImpl( final LockService lockService,
+                                 final MetaIndexEngine indexEngine,
+                                 Class<? extends FileAttributeView>... views ) {
+        super( lockService );
         this.indexEngine = checkNotNull( "indexEngine", indexEngine );
         this.batchIndex = new BatchIndex( indexEngine, this, views );
         this.views = views;
@@ -152,17 +163,19 @@ public class IOServiceIndexedImpl extends IOServiceDotFileImpl {
     }
 
     @Override
-    public synchronized void delete( final Path path )
+    public synchronized void delete( final Path path,
+                                     final DeleteOption... options )
             throws IllegalArgumentException, NoSuchFileException, DirectoryNotEmptyException,
             IOException, SecurityException {
-        super.delete( path );
+        super.delete( path, options );
         indexEngine.delete( toKObjectKey( path ) );
     }
 
     @Override
-    public synchronized boolean deleteIfExists( final Path path )
+    public synchronized boolean deleteIfExists( final Path path,
+                                                final DeleteOption... options )
             throws IllegalArgumentException, DirectoryNotEmptyException, IOException, SecurityException {
-        final boolean result = super.deleteIfExists( path );
+        final boolean result = super.deleteIfExists( path, options );
         if ( result ) {
             indexEngine.delete( toKObjectKey( path ) );
         }
