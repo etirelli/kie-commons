@@ -5,4 +5,6 @@ public abstract interface LockService {
     void lock();
 
     void unlock();
+
+    boolean isLocked();
 }

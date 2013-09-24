@@ -105,6 +105,11 @@ public class ClusterServiceHelix implements ClusterService {
     }
 
     @Override
+    public boolean isLocked() {
+        return lock.isLocked();
+    }
+
+    @Override
     public void broadcastAndWait( MessageType type,
                                   Map<String, String> content,
                                   int timeOut ) {

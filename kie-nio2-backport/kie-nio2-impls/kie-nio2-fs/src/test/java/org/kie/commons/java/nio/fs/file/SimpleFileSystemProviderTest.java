@@ -31,8 +31,8 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.kie.commons.java.nio.base.GeneralPathImpl;
-import org.kie.commons.java.nio.base.NotImplementedException;
 import org.kie.commons.java.nio.channels.SeekableByteChannel;
+import org.kie.commons.java.nio.file.DirectoryNotEmptyException;
 import org.kie.commons.java.nio.file.DirectoryStream;
 import org.kie.commons.java.nio.file.FileAlreadyExistsException;
 import org.kie.commons.java.nio.file.FileSystemAlreadyExistsException;
@@ -42,6 +42,7 @@ import org.kie.commons.java.nio.file.NotLinkException;
 import org.kie.commons.java.nio.file.Path;
 
 import static org.fest.assertions.api.Assertions.*;
+import static org.kie.commons.java.nio.file.StandardDeleteOption.*;
 
 public class SimpleFileSystemProviderTest {
 
@@ -900,6 +901,41 @@ public class SimpleFileSystemProviderTest {
         FileUtils.deleteDirectory( dir.toFile() );
     }
 
+    @Test
+    public void checkDeleteNonEmptyDir() throws IOException {
+        final SimpleFileSystemProvider fsProvider = new SimpleFileSystemProvider();
+
+        final String userSourcePath = System.getProperty( "user.dir" ) + "/temp";
+
+        final Path dir = GeneralPathImpl.create( fsProvider.getFileSystem( URI.create( "file:///" ) ), userSourcePath, false );
+        FileUtils.deleteDirectory( dir.toFile() );
+        fsProvider.createDirectory( dir );
+
+        File.createTempFile( "foo", "bar", dir.toFile() );
+        File.createTempFile( "bar", "foo", dir.toFile() );
+        File.createTempFile( "bar", "foo", dir.toFile() );
+        fsProvider.createDirectory( dir.resolve( "other_dir" ) );
+
+        final DirectoryStream<Path> stream5 = fsProvider.newDirectoryStream( dir, new DirectoryStream.Filter<Path>() {
+            @Override
+            public boolean accept( final Path entry ) throws org.kie.commons.java.nio.IOException {
+                return true;
+            }
+        } );
+
+        assertThat( stream5 ).hasSize( 4 ).contains( dir.resolve( "other_dir" ) );
+
+        try {
+            fsProvider.delete( dir );
+            fail( "must throw error" );
+        } catch ( final DirectoryNotEmptyException expection ) {
+        }
+
+        fsProvider.delete( dir, NON_EMPTY_DIRECTORIES );
+
+        assertThat( dir.toFile().exists() ).isEqualTo( false );
+    }
+
     @Test(expected = NotDirectoryException.class)
     public void newDirectoryStreamInvalidDir() throws IOException {
         final SimpleFileSystemProvider fsProvider = new SimpleFileSystemProvider();
@@ -949,5 +985,4 @@ public class SimpleFileSystemProviderTest {
 
         fsProvider.newDirectoryStream( null, null );
     }
-
 }

@@ -31,6 +31,7 @@ import org.kie.commons.java.nio.file.AccessDeniedException;
 import org.kie.commons.java.nio.file.AccessMode;
 import org.kie.commons.java.nio.file.AtomicMoveNotSupportedException;
 import org.kie.commons.java.nio.file.CopyOption;
+import org.kie.commons.java.nio.file.DeleteOption;
 import org.kie.commons.java.nio.file.DirectoryNotEmptyException;
 import org.kie.commons.java.nio.file.DirectoryStream;
 import org.kie.commons.java.nio.file.FileAlreadyExistsException;
@@ -101,10 +102,10 @@ public interface FileSystemProvider {
     void createLink(Path link, Path existing)
             throws UnsupportedOperationException, FileAlreadyExistsException, IOException, SecurityException;
 
-    void delete(Path path)
+    void delete(Path path, DeleteOption... options)
             throws DirectoryNotEmptyException, NoSuchFileException, IOException, SecurityException;
 
-    boolean deleteIfExists(Path path)
+    boolean deleteIfExists(Path path, DeleteOption... options)
             throws DirectoryNotEmptyException, IOException, SecurityException;
 
     Path readSymbolicLink(Path link)

@@ -25,39 +25,42 @@ import org.kie.commons.java.nio.IOException;
 import org.kie.commons.java.nio.channels.SeekableByteChannel;
 import org.kie.commons.java.nio.file.AtomicMoveNotSupportedException;
 import org.kie.commons.java.nio.file.CopyOption;
+import org.kie.commons.java.nio.file.DeleteOption;
 import org.kie.commons.java.nio.file.DirectoryNotEmptyException;
 import org.kie.commons.java.nio.file.FileAlreadyExistsException;
 import org.kie.commons.java.nio.file.Files;
 import org.kie.commons.java.nio.file.NoSuchFileException;
 import org.kie.commons.java.nio.file.OpenOption;
-import org.kie.commons.java.nio.file.Option;
 import org.kie.commons.java.nio.file.Path;
 import org.kie.commons.java.nio.file.attribute.FileAttribute;
 import org.kie.commons.java.nio.file.attribute.FileAttributeView;
+import org.kie.commons.lock.LockService;
 
 public class IOServiceNio2WrapperImpl
         extends AbstractIOService
         implements IOService {
 
+    public IOServiceNio2WrapperImpl() {
+        super();
+    }
+
+    public IOServiceNio2WrapperImpl( final LockService lockService ) {
+        super( lockService );
+    }
+
     @Override
-    public void delete( final Path path )
+    public void delete( final Path path,
+                        final DeleteOption... options )
             throws IllegalArgumentException, NoSuchFileException, DirectoryNotEmptyException,
             IOException, SecurityException {
-        Files.delete( path );
+        Files.delete( path, options );
     }
 
     @Override
-    public boolean deleteIfExists( final Path path )
+    public boolean deleteIfExists( final Path path,
+                                   final DeleteOption... options )
             throws IllegalArgumentException, DirectoryNotEmptyException, IOException, SecurityException {
-        return Files.deleteIfExists( path );
-    }
-
-    @Override
-    public void startBatch( final Option... options ) {
-    }
-
-    @Override
-    public void endBatch( final Option... options ) {
+        return Files.deleteIfExists( path, options );
     }
 
     @Override
@@ -127,14 +130,6 @@ public class IOServiceNio2WrapperImpl
             out = Files.setAttribute( path, attr.name(), attr.value() );
         }
         return out;
-    }
-
-    @Override
-    public Path setAttribute( final Path path,
-                              final String attribute,
-                              final Object value )
-            throws UnsupportedOperationException, IllegalArgumentException, ClassCastException, IOException, SecurityException {
-        return Files.setAttribute( path, attribute, value );
     }
 
     @Override

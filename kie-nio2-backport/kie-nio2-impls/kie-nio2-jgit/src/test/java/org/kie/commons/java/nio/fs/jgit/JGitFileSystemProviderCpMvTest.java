@@ -117,6 +117,10 @@ public class JGitFileSystemProviderCpMvTest extends AbstractTestInfra {
 
         final DirectoryStream<Path> stream = PROVIDER.newDirectoryStream( PROVIDER.getPath( URI.create( "git://user_branch@copyasset-test-repo/" ) ), null );
 
+        for ( Path path1 : stream ) {
+            System.out.println("content: " + path1.toUri());
+        }
+
         assertThat( stream ).isNotNull().hasSize( 3 );
     }
 
@@ -286,7 +290,7 @@ public class JGitFileSystemProviderCpMvTest extends AbstractTestInfra {
         try {
             PROVIDER.move( path, target );
         } catch ( final Exception e ) {
-            fail( "should move file" );
+            fail( "should move file", e );
         }
     }
 

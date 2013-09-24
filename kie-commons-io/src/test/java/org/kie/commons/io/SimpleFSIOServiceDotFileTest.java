@@ -43,7 +43,7 @@ public class SimpleFSIOServiceDotFileTest extends CommonIOExceptionsServiceDotFi
 
     @Override
     protected int testFileAttrSize2() {
-        return 11;
+        return 10;
     }
 
     @Override

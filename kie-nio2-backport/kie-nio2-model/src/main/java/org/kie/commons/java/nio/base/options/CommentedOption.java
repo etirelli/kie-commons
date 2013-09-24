@@ -20,11 +20,13 @@ import java.util.Date;
 import java.util.TimeZone;
 
 import org.kie.commons.java.nio.file.CopyOption;
+import org.kie.commons.java.nio.file.DeleteOption;
 import org.kie.commons.java.nio.file.OpenOption;
 import org.kie.commons.java.nio.file.Option;
 
 public class CommentedOption
         implements Option,
+                   DeleteOption,
                    OpenOption,
                    CopyOption {
 

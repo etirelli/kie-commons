@@ -31,6 +31,7 @@ import org.kie.commons.java.nio.IOException;
 import org.kie.commons.java.nio.channels.SeekableByteChannel;
 import org.kie.commons.java.nio.file.AtomicMoveNotSupportedException;
 import org.kie.commons.java.nio.file.CopyOption;
+import org.kie.commons.java.nio.file.DeleteOption;
 import org.kie.commons.java.nio.file.DirectoryNotEmptyException;
 import org.kie.commons.java.nio.file.DirectoryStream;
 import org.kie.commons.java.nio.file.FileAlreadyExistsException;
@@ -143,11 +144,13 @@ public interface IOService {
             throws UnsupportedOperationException, FileAlreadyExistsException,
             IOException, SecurityException;
 
-    void delete( final Path path )
+    void delete( final Path path,
+                 final DeleteOption... options )
             throws IllegalArgumentException, NoSuchFileException,
             DirectoryNotEmptyException, IOException, SecurityException;
 
-    boolean deleteIfExists( final Path path )
+    boolean deleteIfExists( final Path path,
+                            final DeleteOption... options )
             throws IllegalArgumentException, DirectoryNotEmptyException,
             IOException, SecurityException;
 

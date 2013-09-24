@@ -32,15 +32,16 @@ import org.kie.commons.java.nio.base.dotfiles.DotFileOption;
 import org.kie.commons.java.nio.channels.SeekableByteChannel;
 import org.kie.commons.java.nio.file.AtomicMoveNotSupportedException;
 import org.kie.commons.java.nio.file.CopyOption;
+import org.kie.commons.java.nio.file.DeleteOption;
 import org.kie.commons.java.nio.file.DirectoryNotEmptyException;
 import org.kie.commons.java.nio.file.FileAlreadyExistsException;
 import org.kie.commons.java.nio.file.Files;
 import org.kie.commons.java.nio.file.NoSuchFileException;
 import org.kie.commons.java.nio.file.OpenOption;
-import org.kie.commons.java.nio.file.Option;
 import org.kie.commons.java.nio.file.Path;
 import org.kie.commons.java.nio.file.attribute.FileAttribute;
 import org.kie.commons.java.nio.file.attribute.FileAttributeView;
+import org.kie.commons.lock.LockService;
 
 import static org.kie.commons.java.nio.base.dotfiles.DotFileUtils.*;
 import static org.kie.commons.java.nio.file.StandardCopyOption.*;
@@ -50,13 +51,22 @@ public class IOServiceDotFileImpl
         extends AbstractIOService
         implements IOService {
 
+    public IOServiceDotFileImpl() {
+        super();
+    }
+
+    public IOServiceDotFileImpl( final LockService lockService ) {
+        super( lockService );
+    }
+
     @Override
-    public synchronized void delete( final Path path )
+    public synchronized void delete( final Path path,
+                                     final DeleteOption... options )
             throws IllegalArgumentException, NoSuchFileException, DirectoryNotEmptyException,
             IOException, SecurityException {
-        Files.delete( path );
+        Files.delete( path, options );
         try {
-            Files.deleteIfExists( dot( path ) );
+            Files.deleteIfExists( dot( path ), options );
         } catch ( Exception ex ) {
         }
         if ( path instanceof AttrHolder ) {
@@ -65,25 +75,18 @@ public class IOServiceDotFileImpl
     }
 
     @Override
-    public synchronized boolean deleteIfExists( final Path path )
+    public synchronized boolean deleteIfExists( final Path path,
+                                                final DeleteOption... options )
             throws IllegalArgumentException, DirectoryNotEmptyException, IOException, SecurityException {
-        final boolean result = Files.deleteIfExists( path );
+        final boolean result = Files.deleteIfExists( path, options );
         try {
-            Files.deleteIfExists( dot( path ) );
+            Files.deleteIfExists( dot( path ), options );
         } catch ( Exception ex ) {
         }
         if ( path instanceof AttrHolder ) {
             ( (AttrHolder) path ).getAttrStorage().clear();
         }
         return result;
-    }
-
-    @Override
-    public void startBatch( final Option... options ) {
-    }
-
-    @Override
-    public void endBatch( final Option... options ) {
     }
 
     @Override
@@ -208,24 +211,6 @@ public class IOServiceDotFileImpl
         }
 
         return original;
-    }
-
-    @Override
-    public Path setAttribute( final Path path,
-                              final String attribute,
-                              final Object value )
-            throws UnsupportedOperationException, IllegalArgumentException, ClassCastException, IOException, SecurityException {
-        return setAttributes( path, new FileAttribute<Object>() {
-            @Override
-            public String name() {
-                return attribute;
-            }
-
-            @Override
-            public Object value() {
-                return value;
-            }
-        } );
     }
 
     @Override

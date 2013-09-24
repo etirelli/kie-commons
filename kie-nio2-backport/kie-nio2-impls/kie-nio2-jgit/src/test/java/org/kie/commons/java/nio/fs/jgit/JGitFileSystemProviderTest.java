@@ -54,6 +54,7 @@ import org.kie.commons.java.nio.file.attribute.FileTime;
 import org.kie.commons.java.nio.fs.jgit.util.JGitUtil;
 
 import static org.fest.assertions.api.Assertions.*;
+import static org.kie.commons.java.nio.file.StandardDeleteOption.*;
 import static org.kie.commons.java.nio.fs.jgit.util.JGitUtil.*;
 
 public class JGitFileSystemProviderTest extends AbstractTestInfra {
@@ -152,7 +153,7 @@ public class JGitFileSystemProviderTest extends AbstractTestInfra {
             put( "listMode", "ALL" );
         }} );
 
-        commit( origin.gitRepo(), "master", "user1", "user1@example.com", "commitx", null, null, new HashMap<String, File>() {{
+        commit( origin.gitRepo(), "master", "user1", "user1@example.com", "commitx", null, null, false, new HashMap<String, File>() {{
             put( "file.txt", tempFile( "temp" ) );
         }} );
 
@@ -171,7 +172,7 @@ public class JGitFileSystemProviderTest extends AbstractTestInfra {
 
         assertThat( fs.getPath( "file.txt" ).toFile() ).isNotNull().exists();
 
-        commit( origin.gitRepo(), "master", "user1", "user1@example.com", "commitx", null, null, new HashMap<String, File>() {{
+        commit( origin.gitRepo(), "master", "user1", "user1@example.com", "commitx", null, null, false, new HashMap<String, File>() {{
             put( "fileXXXXX.txt", tempFile( "temp" ) );
         }} );
 
@@ -191,7 +192,7 @@ public class JGitFileSystemProviderTest extends AbstractTestInfra {
             }
         }
 
-        commit( origin.gitRepo(), "master", "user1", "user1@example.com", "commitx", null, null, new HashMap<String, File>() {{
+        commit( origin.gitRepo(), "master", "user1", "user1@example.com", "commitx", null, null, false, new HashMap<String, File>() {{
             put( "fileYYYY.txt", tempFile( "tempYYYY" ) );
         }} );
 
@@ -295,7 +296,7 @@ public class JGitFileSystemProviderTest extends AbstractTestInfra {
 
         final Git origin = JGitUtil.newRepository( gitFolder, true );
 
-        commit( origin, "master", "user", "user@example.com", "commit message", null, null, new HashMap<String, File>() {{
+        commit( origin, "master", "user", "user@example.com", "commit message", null, null, false, new HashMap<String, File>() {{
             put( "myfile.txt", tempFile( "temp\n.origin\n.content" ) );
         }} );
 
@@ -329,7 +330,7 @@ public class JGitFileSystemProviderTest extends AbstractTestInfra {
 
         final Git origin = JGitUtil.newRepository( gitFolder, true );
 
-        commit( origin, "master", "user", "user@example.com", "commit message", null, null, new HashMap<String, File>() {{
+        commit( origin, "master", "user", "user@example.com", "commit message", null, null, false, new HashMap<String, File>() {{
             put( "path/to/file/myfile.txt", tempFile( "temp\n.origin\n.content" ) );
         }} );
 
@@ -363,7 +364,7 @@ public class JGitFileSystemProviderTest extends AbstractTestInfra {
 
         final Git origin = JGitUtil.newRepository( gitFolder, true );
 
-        commit( origin, "master", "user", "user@example.com", "commit message", null, null, new HashMap<String, File>() {{
+        commit( origin, "master", "user", "user@example.com", "commit message", null, null, false, new HashMap<String, File>() {{
             put( "path/to/file/myfile.txt", tempFile( "temp\n.origin\n.content" ) );
         }} );
 
@@ -390,7 +391,7 @@ public class JGitFileSystemProviderTest extends AbstractTestInfra {
 
         final Git origin = JGitUtil.newRepository( gitFolder, true );
 
-        commit( origin, "master", "user1", "user1@example.com", "commitx", null, null, new HashMap<String, File>() {{
+        commit( origin, "master", "user1", "user1@example.com", "commitx", null, null, false, new HashMap<String, File>() {{
             put( "file.txt", tempFile( "temp.origin.content.2" ) );
         }} );
 
@@ -416,10 +417,10 @@ public class JGitFileSystemProviderTest extends AbstractTestInfra {
 
         final Git origin = JGitUtil.newRepository( gitFolder, true );
 
-        commit( origin, "master", "user", "user@example.com", "commit message", null, null, new HashMap<String, File>() {{
+        commit( origin, "master", "user", "user@example.com", "commit message", null, null, false, new HashMap<String, File>() {{
             put( "myfile.txt", tempFile( "temp\n.origin\n.content" ) );
         }} );
-        commit( origin, "user_branch", "user", "user@example.com", "commit message", null, null, new HashMap<String, File>() {{
+        commit( origin, "user_branch", "user", "user@example.com", "commit message", null, null, false, new HashMap<String, File>() {{
             put( "path/to/some/file/myfile.txt", tempFile( "some\n.content\nhere" ) );
         }} );
 
@@ -462,10 +463,10 @@ public class JGitFileSystemProviderTest extends AbstractTestInfra {
 
         final Git origin = JGitUtil.newRepository( gitFolder, true );
 
-        commit( origin, "master", "user", "user@example.com", "commit message", null, null, new HashMap<String, File>() {{
+        commit( origin, "master", "user", "user@example.com", "commit message", null, null, false, new HashMap<String, File>() {{
             put( "myfile.txt", tempFile( "temp\n.origin\n.content" ) );
         }} );
-        commit( origin, "user_branch", "user", "user@example.com", "commit message", null, null, new HashMap<String, File>() {{
+        commit( origin, "user_branch", "user", "user@example.com", "commit message", null, null, false, new HashMap<String, File>() {{
             put( "path/to/some/file/myfile.txt", tempFile( "some\n.content\nhere" ) );
         }} );
 
@@ -809,6 +810,62 @@ public class JGitFileSystemProviderTest extends AbstractTestInfra {
         PROVIDER.createDirectory( crazyPath );
 
         assertThat( PROVIDER.newDirectoryStream( crazyPath, null ) ).isNotNull().hasSize( 1 );
+    }
+
+    @Test
+    public void testDeleteNonEmptyDirectory() throws IOException {
+        final URI newRepo = URI.create( "git://delete-non-empty-test-repo" );
+        PROVIDER.newFileSystem( newRepo, EMPTY_ENV );
+
+        final Path dir = PROVIDER.getPath( URI.create( "git://master@delete-non-empty-test-repo/other/path" ) );
+
+        final Path _root = PROVIDER.getPath( URI.create( "git://master@delete-non-empty-test-repo/myfile1.txt" ) );
+
+        final OutputStream outRootStream = PROVIDER.newOutputStream( _root );
+        outRootStream.write( "my cool content".getBytes() );
+        outRootStream.close();
+
+        final Path path = PROVIDER.getPath( URI.create( "git://master@delete-non-empty-test-repo/other/path/myfile1.txt" ) );
+
+        final OutputStream outStream = PROVIDER.newOutputStream( path );
+        outStream.write( "my cool content".getBytes() );
+        outStream.close();
+
+        final Path path2 = PROVIDER.getPath( URI.create( "git://master@delete-non-empty-test-repo/other/path/myfile2.txt" ) );
+
+        final OutputStream outStream2 = PROVIDER.newOutputStream( path2 );
+        outStream2.write( "my cool content".getBytes() );
+        outStream2.close();
+
+        final Path path3 = PROVIDER.getPath( URI.create( "git://master@delete-non-empty-test-repo/other/path/myfile3.txt" ) );
+
+        final OutputStream outStream3 = PROVIDER.newOutputStream( path3 );
+        outStream3.write( "my cool content".getBytes() );
+        outStream3.close();
+
+        final Path dir1 = PROVIDER.getPath( URI.create( "git://master@delete-non-empty-test-repo/other/path/dir" ) );
+
+        PROVIDER.createDirectory( dir1 );
+
+        final DirectoryStream<Path> stream3 = PROVIDER.newDirectoryStream( dir, null );
+
+        assertThat( stream3 ).isNotNull().hasSize( 4 );
+
+        try {
+            PROVIDER.delete( dir );
+            fail( "dir not empty" );
+        } catch ( final DirectoryNotEmptyException ignore ) {
+        }
+
+        try {
+            final CommentedOption op = new CommentedOption( "User Tester", "user.tester@example.com", "omg, erase dir!" );
+
+            PROVIDER.delete( dir, NON_EMPTY_DIRECTORIES, op );
+        } catch ( final DirectoryNotEmptyException ignore ) {
+            fail( "dir should be deleted!" );
+        }
+
+        assertThat( PROVIDER.exists( dir ) ).isEqualTo( false );
     }
 
     @Test
