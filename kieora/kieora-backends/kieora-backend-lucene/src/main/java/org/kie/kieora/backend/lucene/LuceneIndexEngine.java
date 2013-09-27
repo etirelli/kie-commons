@@ -61,7 +61,11 @@ public class LuceneIndexEngine implements MetaIndexEngine {
 
     @Override
     public synchronized void startBatchMode() {
-        batchMode++;
+        if ( batchMode < 0 ) {
+            batchMode = 1;
+        } else {
+            batchMode++;
+        }
     }
 
     @Override
@@ -129,7 +133,7 @@ public class LuceneIndexEngine implements MetaIndexEngine {
     }
 
     private synchronized void commitIfNotBatchMode() {
-        if ( batchMode == 0 ) {
+        if ( batchMode <= 0 ) {
             commit();
         }
     }
@@ -137,7 +141,7 @@ public class LuceneIndexEngine implements MetaIndexEngine {
     @Override
     public synchronized void commit() {
         batchMode--;
-        if ( batchMode == 0 ) {
+        if ( batchMode <= 0 ) {
             lucene.commit();
         }
     }

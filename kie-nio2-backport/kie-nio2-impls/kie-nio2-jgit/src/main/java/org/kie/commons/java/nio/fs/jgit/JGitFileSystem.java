@@ -16,10 +16,14 @@
 
 package org.kie.commons.java.nio.fs.jgit;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Queue;
 import java.util.Set;
@@ -67,7 +71,8 @@ public class JGitFileSystem implements FileSystem,
     private final FileStore fileStore;
     private final String name;
     private final CredentialsProvider credential;
-    private final Queue<WatchKey> events = new ConcurrentLinkedQueue<WatchKey>();
+    private final Map<WatchService, Queue<WatchKey>> events = new HashMap<WatchService, Queue<WatchKey>>();
+    private final Collection<WatchService> watchServices = new ArrayList<WatchService>();
 
     JGitFileSystem( final JGitFileSystemProvider provider,
                     final String fullHostName,
@@ -252,29 +257,25 @@ public class JGitFileSystem implements FileSystem,
     public WatchService newWatchService()
             throws UnsupportedOperationException, IOException {
         checkClose();
-        return new WatchService() {
-            private boolean isClose = false;
+        final WatchService ws = new WatchService() {
+            private boolean wsClose = false;
 
             @Override
             public WatchKey poll() throws ClosedWatchServiceException {
-                return events.poll();
+                return events.get( this ).poll();
             }
 
             @Override
             public WatchKey poll( long timeout,
                                   TimeUnit unit ) throws ClosedWatchServiceException, org.kie.commons.java.nio.file.InterruptedException {
-                return events.poll();
+                return events.get( this ).poll();
             }
 
             @Override
             public WatchKey take() throws ClosedWatchServiceException, InterruptedException {
-                while ( !isClose ) {
-                    if ( events.size() > 0 ) {
-                        return events.poll();
-                    }
-                    try {
-                        Thread.sleep( 10 );
-                    } catch ( java.lang.InterruptedException e ) {
+                while ( !wsClose && !isClose ) {
+                    if ( events.get( this ).size() > 0 ) {
+                        return events.get( this ).poll();
                     }
                 }
                 return null;
@@ -282,9 +283,22 @@ public class JGitFileSystem implements FileSystem,
 
             @Override
             public void close() throws IOException {
-                isClose = true;
+                wsClose = true;
+                if ( !isClose ) {
+                    watchServices.remove( this );
+                }
+            }
+
+            @Override
+            public String toString() {
+                return "WatchService{" +
+                        "FileSystem=" + JGitFileSystem.this.toString() +
+                        '}';
             }
         };
+        events.put( ws, new ConcurrentLinkedQueue<WatchKey>() );
+        watchServices.add( ws );
+        return ws;
     }
 
     @Override
@@ -294,6 +308,11 @@ public class JGitFileSystem implements FileSystem,
         }
         gitRepo.getRepository().close();
         isClose = true;
+        for ( final WatchService ws : watchServices ) {
+            ws.close();
+        }
+        watchServices.clear();
+        events.clear();
         provider.onCloseFileSystem( this );
     }
 
@@ -356,8 +375,12 @@ public class JGitFileSystem implements FileSystem,
     }
 
     public void publishEvents( final Path watchable,
-                               final List<WatchEvent<?>> events ) {
-        this.events.add( new WatchKey() {
+                               final List<WatchEvent<?>> elist ) {
+        if ( this.events.isEmpty() ) {
+            return;
+        }
+
+        final WatchKey wk = new WatchKey() {
 
             @Override
             public boolean isValid() {
@@ -366,7 +389,7 @@ public class JGitFileSystem implements FileSystem,
 
             @Override
             public List<WatchEvent<?>> pollEvents() {
-                return events;
+                return new ArrayList<WatchEvent<?>>( elist );
             }
 
             @Override
@@ -382,6 +405,10 @@ public class JGitFileSystem implements FileSystem,
             public Watchable watchable() {
                 return watchable;
             }
-        } );
+        };
+
+        for ( final Queue<WatchKey> queue : events.values() ) {
+            queue.add( wk );
+        }
     }
 }

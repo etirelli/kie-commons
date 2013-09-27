@@ -35,6 +35,7 @@ import java.util.Set;
 
 import org.kie.commons.io.FileSystemType;
 import org.kie.commons.io.IOService;
+import org.kie.commons.io.IOWatchService;
 import org.kie.commons.io.impl.lock.ThreadLockServiceImpl;
 import org.kie.commons.java.nio.IOException;
 import org.kie.commons.java.nio.base.AbstractPath;
@@ -62,6 +63,7 @@ import org.kie.commons.java.nio.file.attribute.FileTime;
 import org.kie.commons.lock.LockService;
 
 import static org.kie.commons.java.nio.file.StandardOpenOption.*;
+import static org.kie.commons.validation.Preconditions.*;
 
 public abstract class AbstractIOService implements IOService {
 
@@ -79,16 +81,26 @@ public abstract class AbstractIOService implements IOService {
     };
 
     protected final LockService lockService;
+    protected final IOWatchService ioWatchService;
     protected final Map<FileSystemType, List<FileSystem>> fileSystems = new HashMap<FileSystemType, List<FileSystem>>();
 
     protected NewFileSystemListener newFileSystemListener = null;
+    protected boolean isDisposed = false;
 
     public AbstractIOService() {
         lockService = new ThreadLockServiceImpl();
+        ioWatchService = null;
     }
 
-    public AbstractIOService( final LockService lockService ) {
+    public AbstractIOService( final IOWatchService watchService ) {
+        lockService = new ThreadLockServiceImpl();
+        ioWatchService = watchService;
+    }
+
+    public AbstractIOService( final LockService lockService,
+                              final IOWatchService watchService ) {
         this.lockService = lockService;
+        this.ioWatchService = watchService;
     }
 
     @Override
@@ -172,7 +184,7 @@ public abstract class AbstractIOService implements IOService {
     @Override
     public FileSystem getFileSystem( final URI uri ) {
         try {
-            return FileSystems.getFileSystem( uri );
+            return registerFS( FileSystems.getFileSystem( uri ), DEFAULT_FS_TYPE );
         } catch ( final Exception ex ) {
             return null;
         }
@@ -190,14 +202,11 @@ public abstract class AbstractIOService implements IOService {
                                      final FileSystemType type )
             throws IllegalArgumentException, FileSystemAlreadyExistsException, ProviderNotFoundException,
             IOException, SecurityException {
-
         try {
             final FileSystem fs = FileSystems.newFileSystem( uri, env );
-            registerFS( fs, type );
-            return fs;
+            return registerFS( fs, type );
         } catch ( final FileSystemAlreadyExistsException ex ) {
-            final FileSystem fs = FileSystems.getFileSystem( uri );
-            registerFS( fs, type );
+            registerFS( FileSystems.getFileSystem( uri ), type );
             throw ex;
         }
     }
@@ -207,11 +216,17 @@ public abstract class AbstractIOService implements IOService {
         this.newFileSystemListener = listener;
     }
 
-    private void registerFS( final FileSystem fs,
-                             final FileSystemType type ) {
-        if ( fs == null || type == null ) {
-            return;
+    private FileSystem registerFS( final FileSystem fs,
+                                   final FileSystemType type ) {
+        checkNotNull( "type", type );
+        if ( fs == null ) {
+            return fs;
         }
+
+        if ( ioWatchService != null ) {
+            ioWatchService.addWatchService( fs.newWatchService() );
+        }
+
         synchronized ( this ) {
             List<FileSystem> fsList = fileSystems.get( type );
             if ( fsList == null ) {
@@ -220,6 +235,7 @@ public abstract class AbstractIOService implements IOService {
             }
             fsList.add( fs );
         }
+        return fs;
     }
 
     @Override
@@ -447,7 +463,7 @@ public abstract class AbstractIOService implements IOService {
                        final byte[] bytes,
                        final OpenOption... options )
             throws IOException, UnsupportedOperationException, SecurityException {
-        return Files.write( path, bytes, options );
+        return write( path, bytes, new HashSet<OpenOption>( Arrays.asList( options ) ) );
     }
 
     @Override
@@ -455,7 +471,16 @@ public abstract class AbstractIOService implements IOService {
                        final Iterable<? extends CharSequence> lines,
                        final Charset cs,
                        final OpenOption... options ) throws IllegalArgumentException, IOException, UnsupportedOperationException, SecurityException {
-        return Files.write( path, lines, cs, options );
+        return write( path, toByteArray( lines, cs ), new HashSet<OpenOption>( Arrays.asList( options ) ) );
+    }
+
+    private byte[] toByteArray( final Iterable<? extends CharSequence> lines,
+                                final Charset cs ) {
+        final StringBuilder sb = new StringBuilder();
+        for ( final CharSequence line : lines ) {
+            sb.append( line.toString() );
+        }
+        return sb.toString().getBytes();
     }
 
     @Override
@@ -464,7 +489,7 @@ public abstract class AbstractIOService implements IOService {
                        final Charset cs,
                        final OpenOption... options )
             throws IllegalArgumentException, IOException, UnsupportedOperationException {
-        return Files.write( path, content.getBytes( cs ), options );
+        return write( path, content.getBytes( cs ), new HashSet<OpenOption>( Arrays.asList( options ) ) );
     }
 
     @Override
@@ -491,16 +516,17 @@ public abstract class AbstractIOService implements IOService {
                        final Map<String, ?> attrs,
                        final OpenOption... options )
             throws IllegalArgumentException, IOException, UnsupportedOperationException {
-
         return write( path, content, cs, new HashSet<OpenOption>( Arrays.asList( options ) ), convert( attrs ) );
     }
 
     @Override
     public void dispose() {
+        isDisposed = true;
+        ioWatchService.dispose();
         for ( final FileSystem fileSystem : getFileSystems() ) {
             try {
                 fileSystem.close();
-            } catch ( Exception ex ) {
+            } catch ( final Exception ignored ) {
             }
         }
     }

@@ -30,6 +30,7 @@ public class CommentedOption
                    OpenOption,
                    CopyOption {
 
+    private final String sessionId;
     private final String name;
     private final String email;
     private final String message;
@@ -37,25 +38,40 @@ public class CommentedOption
     private final TimeZone timeZone;
 
     public CommentedOption( final String name ) {
-        this( name, null, null, null, null );
+        this( null, name, null, null, null, null );
     }
 
     public CommentedOption( final String name,
                             final String message ) {
-        this( name, null, message, null, null );
+        this( null, name, null, message, null, null );
     }
 
     public CommentedOption( final String name,
                             final String email,
                             final String message ) {
-        this( name, email, message, null, null );
+        this( null, name, email, message, null, null );
+    }
+
+    public CommentedOption( final String sessionId,
+                            final String name,
+                            final String email,
+                            final String message ) {
+        this( sessionId, name, email, message, null, null );
     }
 
     public CommentedOption( final String name,
                             final String email,
                             final String message,
                             final Date when ) {
-        this( name, email, message, when, null );
+        this( null, name, email, message, when, null );
+    }
+
+    public CommentedOption( final String sessionId,
+                            final String name,
+                            final String email,
+                            final String message,
+                            final Date when ) {
+        this( sessionId, name, email, message, when, null );
     }
 
     public CommentedOption( final String name,
@@ -63,6 +79,16 @@ public class CommentedOption
                             final String message,
                             final Date when,
                             final TimeZone timeZone ) {
+        this( null, name, email, message, when, timeZone );
+    }
+
+    public CommentedOption( final String sessionId,
+                            final String name,
+                            final String email,
+                            final String message,
+                            final Date when,
+                            final TimeZone timeZone ) {
+        this.sessionId = sessionId;
         this.name = name;
         this.email = email;
         this.message = message;
@@ -80,6 +106,10 @@ public class CommentedOption
 
     public String getMessage() {
         return message;
+    }
+
+    public String getSessionId() {
+        return sessionId;
     }
 
     public Date getWhen() {

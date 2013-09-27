@@ -57,12 +57,13 @@ public class BatchIndexTest {
     private static BaseLuceneSetup luceneSetup;
     private static MetaIndexEngine indexEngine;
 
-    public static IOService ioService() {
+    public static IOService ioService() throws InterruptedException {
         if ( ioService == null ) {
             metaModelStore = new InMemoryMetaModelStore();
             luceneSetup = new RAMLuceneSetup();
             indexEngine = new LuceneIndexEngine( metaModelStore, luceneSetup, new SimpleFieldFactory() );
             ioService = new IOServiceIndexedImpl( indexEngine, DublinCoreView.class, VersionAttributeView.class );
+            Thread.sleep( 50 );
         }
         return ioService;
     }
@@ -194,9 +195,24 @@ public class BatchIndexTest {
             ioService().write( file, "plans!?" );
         }
 
-        new BatchIndex( indexEngine, ioService(), DublinCoreView.class, VersionAttributeView.class ).run( ioService().get( "git://temp-repo-test/" ) );
+        new BatchIndex( indexEngine, ioService(), DublinCoreView.class ).run( ioService().get( "git://temp-repo-test/" ) );
+
+        Thread.sleep( 100 );
 
         final IndexSearcher searcher = luceneSetup.nrtSearcher();
+
+        {
+            final TopScoreDocCollector collector = TopScoreDocCollector.create( 10, true );
+
+            searcher.search( new MatchAllDocsQuery(), collector );
+
+            final ScoreDoc[] hits = collector.topDocs().scoreDocs;
+
+//            for ( ScoreDoc hit : hits ) {
+//                System.out.println( "doc:" + org.kie.kieora.backend.lucene.util.KObjectUtil.toKObject( searcher.doc( hit.doc ) ).getKey() );
+//            }
+            assertEquals( 4, hits.length );
+        }
 
         {
             final TopScoreDocCollector collector = TopScoreDocCollector.create( 10, true );
@@ -216,16 +232,6 @@ public class BatchIndexTest {
             final ScoreDoc[] hits = collector.topDocs().scoreDocs;
 
             assertEquals( 1, hits.length );
-        }
-
-        {
-            final TopScoreDocCollector collector = TopScoreDocCollector.create( 10, true );
-
-            searcher.search( new MatchAllDocsQuery(), collector );
-
-            final ScoreDoc[] hits = collector.topDocs().scoreDocs;
-
-            assertEquals( 4, hits.length );
         }
 
         luceneSetup.nrtRelease( searcher );
