@@ -276,6 +276,11 @@ public class JGitFileSystem implements FileSystem,
                 while ( !wsClose && !isClose ) {
                     if ( events.get( this ).size() > 0 ) {
                         return events.get( this ).poll();
+                    } else {
+                        try {
+                            Thread.sleep( 200 );
+                        } catch ( java.lang.InterruptedException e ) {
+                        }
                     }
                 }
                 return null;
