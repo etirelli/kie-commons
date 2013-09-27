@@ -45,7 +45,6 @@ import org.apache.commons.httpclient.URIException;
 import org.apache.commons.httpclient.util.URIUtil;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ListBranchCommand;
-import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
@@ -65,6 +64,7 @@ import org.eclipse.jgit.util.FileUtils;
 import org.kie.commons.cluster.ClusterService;
 import org.kie.commons.data.Pair;
 import org.kie.commons.java.nio.IOException;
+import org.kie.commons.java.nio.base.AbstractPath;
 import org.kie.commons.java.nio.base.BasicFileAttributesImpl;
 import org.kie.commons.java.nio.base.ExtendedAttributeView;
 import org.kie.commons.java.nio.base.FileSystemState;
@@ -96,8 +96,6 @@ import org.kie.commons.java.nio.file.Path;
 import org.kie.commons.java.nio.file.StandardCopyOption;
 import org.kie.commons.java.nio.file.StandardDeleteOption;
 import org.kie.commons.java.nio.file.StandardOpenOption;
-import org.kie.commons.java.nio.file.StandardWatchEventKind;
-import org.kie.commons.java.nio.file.WatchEvent;
 import org.kie.commons.java.nio.file.attribute.BasicFileAttributeView;
 import org.kie.commons.java.nio.file.attribute.BasicFileAttributes;
 import org.kie.commons.java.nio.file.attribute.FileAttribute;
@@ -302,7 +300,7 @@ public class JGitFileSystemProvider implements FileSystemProvider {
                         public void onPostReceive( final ReceivePack rp,
                                                    final Collection<ReceiveCommand> commands ) {
                             final ObjectId newHead = JGitUtil.getTreeRefObjectId( db, treeRef );
-                            notifyDiffs( fs, treeRef, oldHead, newHead );
+                            notifyDiffs( fs, treeRef, "<system>", "<system>", oldHead, newHead );
 
                             if ( clusterService != null ) {
                                 clusterService.broadcast( new MessageType() {
@@ -337,77 +335,6 @@ public class JGitFileSystemProvider implements FileSystemProvider {
             throw new IOException( e );
         }
 
-    }
-
-    private synchronized void notifyDiffs( final JGitFileSystem fs,
-                                           final String tree,
-                                           final ObjectId oldHead,
-                                           final ObjectId newHead ) {
-
-        final String host = tree + "@" + fs.getName();
-        final Path root = JGitPathImpl.createRoot( fs, "/", host, false );
-
-        final List<DiffEntry> diff = JGitUtil.getDiff( fs.gitRepo().getRepository(), oldHead, newHead );
-        final List<WatchEvent<?>> events = new ArrayList<WatchEvent<?>>( diff.size() );
-
-        for ( final DiffEntry diffEntry : diff ) {
-            final Path oldPath;
-            if ( !diffEntry.getOldPath().equals( DiffEntry.DEV_NULL ) ) {
-                oldPath = JGitPathImpl.create( fs, "/" + diffEntry.getOldPath(), host, null, false );
-            } else {
-                oldPath = null;
-            }
-
-            final Path newPath;
-            if ( !diffEntry.getNewPath().equals( DiffEntry.DEV_NULL ) ) {
-                JGitPathInfo pathInfo = resolvePath( fs.gitRepo(), tree, diffEntry.getNewPath() );
-                newPath = JGitPathImpl.create( fs, "/" + pathInfo.getPath(), host, pathInfo.getObjectId(), false );
-            } else {
-                newPath = null;
-            }
-
-            events.add( new WatchEvent() {
-                @Override
-                public Kind kind() {
-                    switch ( diffEntry.getChangeType() ) {
-                        case ADD:
-                        case COPY:
-                            return StandardWatchEventKind.ENTRY_CREATE;
-                        case DELETE:
-                            return StandardWatchEventKind.ENTRY_DELETE;
-                        case MODIFY:
-                            return StandardWatchEventKind.ENTRY_MODIFY;
-                        case RENAME:
-                            return StandardWatchEventKind.ENTRY_RENAME;
-                        default:
-                            throw new RuntimeException();
-                    }
-                }
-
-                @Override
-                public int count() {
-                    return 1;
-                }
-
-                @Override
-                public Object context() {
-                    switch ( diffEntry.getChangeType() ) {
-                        case ADD:
-                        case COPY:
-                            return newPath;
-                        case DELETE:
-                            return oldPath;
-                        case MODIFY:
-                            return oldPath;
-                        case RENAME:
-                            return new Pair<Path, Path>( oldPath, newPath );
-                        default:
-                            throw new RuntimeException();
-                    }
-                }
-            } );
-            fs.publishEvents( root, events );
-        }
     }
 
     @Override
@@ -544,7 +471,7 @@ public class JGitFileSystemProvider implements FileSystemProvider {
                 final Map<String, String> params = getQueryParams( uri );
                 syncRepository( fileSystem.gitRepo(), fileSystem.getCredential(), params.get( "sync" ), hasForceFlag( uri ) );
                 final ObjectId newHead = JGitUtil.getTreeRefObjectId( fileSystem.gitRepo().getRepository(), treeRef );
-                notifyDiffs( fileSystem, treeRef, oldHead, newHead );
+                notifyDiffs( fileSystem, treeRef, "<system>", "<system>", oldHead, newHead );
             } catch ( final Exception ex ) {
                 throw new IOException( ex );
             }
@@ -603,6 +530,7 @@ public class JGitFileSystemProvider implements FileSystemProvider {
             return new FilterOutputStream( new FileOutputStream( file ) ) {
                 public void close() throws java.io.IOException {
                     super.close();
+                    String sessionId = null;
                     String name = null;
                     String email = null;
                     String message = null;
@@ -613,6 +541,7 @@ public class JGitFileSystemProvider implements FileSystemProvider {
                         for ( final OpenOption option : options ) {
                             if ( option instanceof CommentedOption ) {
                                 final CommentedOption op = (CommentedOption) option;
+                                sessionId = op.getSessionId();
                                 name = op.getName();
                                 email = op.getEmail();
                                 message = op.getMessage();
@@ -623,7 +552,7 @@ public class JGitFileSystemProvider implements FileSystemProvider {
                         }
                     }
 
-                    commit( gPath.getFileSystem().gitRepo(), gPath.getRefTree(), name, email, message, timeZone, when, amend(), new HashMap<String, File>() {{
+                    commit( gPath, sessionId, name, email, message, timeZone, when, amend(), new HashMap<String, File>() {{
                         put( gPath.getPath(), file );
                     }} );
                     checkAmend();
@@ -677,6 +606,7 @@ public class JGitFileSystemProvider implements FileSystemProvider {
                 @Override
                 public void close() throws java.io.IOException {
                     super.close();
+                    String sessionId = null;
                     String name = null;
                     String email = null;
                     String message = null;
@@ -687,6 +617,7 @@ public class JGitFileSystemProvider implements FileSystemProvider {
                         for ( final OpenOption option : options ) {
                             if ( option instanceof CommentedOption ) {
                                 final CommentedOption op = (CommentedOption) option;
+                                sessionId = op.getSessionId();
                                 name = op.getName();
                                 email = op.getEmail();
                                 message = op.getMessage();
@@ -706,7 +637,7 @@ public class JGitFileSystemProvider implements FileSystemProvider {
 
                     final File dotfile = tempDot;
 
-                    commit( gPath.getFileSystem().gitRepo(), gPath.getRefTree(), name, email, message, timeZone, when, amend(), new HashMap<String, File>() {{
+                    commit( gPath, sessionId, name, email, message, timeZone, when, amend(), new HashMap<String, File>() {{
                         put( gPath.getPath(), file );
                         if ( dotfile != null ) {
                             put( toPathImpl( dot( gPath ) ).getPath(), dotfile );
@@ -717,6 +648,8 @@ public class JGitFileSystemProvider implements FileSystemProvider {
             };
         } catch ( java.io.IOException e ) {
             throw new IOException( e );
+        } finally {
+            ( (AbstractPath) path ).clearCache();
         }
     }
 
@@ -933,6 +866,7 @@ public class JGitFileSystemProvider implements FileSystemProvider {
 
     void deleteResource( final JGitPathImpl path,
                          final DeleteOption... options ) {
+        String sessionId = null;
         String name = null;
         String email = null;
         String message = "delete {" + path.getPath() + "}";
@@ -943,6 +877,7 @@ public class JGitFileSystemProvider implements FileSystemProvider {
             for ( final DeleteOption option : options ) {
                 if ( option instanceof CommentedOption ) {
                     final CommentedOption op = (CommentedOption) option;
+                    sessionId = op.getSessionId();
                     name = op.getName();
                     email = op.getEmail();
                     message = op.getMessage();
@@ -953,7 +888,7 @@ public class JGitFileSystemProvider implements FileSystemProvider {
             }
         }
 
-        JGitUtil.delete( path.getFileSystem().gitRepo(), path.getRefTree(), path.getPath(), name, email, message, timeZone, when, amend() );
+        JGitUtil.delete( path, sessionId, name, email, message, timeZone, when, amend() );
         checkAmend();
     }
 

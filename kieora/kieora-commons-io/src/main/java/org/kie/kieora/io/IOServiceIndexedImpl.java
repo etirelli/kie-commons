@@ -26,12 +26,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.kie.commons.data.Pair;
 import org.kie.commons.io.FileSystemType;
+import org.kie.commons.io.IOWatchService;
 import org.kie.commons.io.impl.IOServiceDotFileImpl;
 import org.kie.commons.java.nio.IOException;
-import org.kie.commons.java.nio.base.FileSystemId;
 import org.kie.commons.java.nio.base.Properties;
+import org.kie.commons.java.nio.base.WatchContext;
 import org.kie.commons.java.nio.channels.SeekableByteChannel;
 import org.kie.commons.java.nio.file.AtomicMoveNotSupportedException;
 import org.kie.commons.java.nio.file.CopyOption;
@@ -54,6 +54,7 @@ import org.kie.commons.lock.LockService;
 import org.kie.kieora.engine.MetaIndexEngine;
 
 import static org.kie.commons.java.nio.base.dotfiles.DotFileUtils.*;
+import static org.kie.commons.java.nio.file.StandardWatchEventKind.*;
 import static org.kie.commons.validation.Preconditions.*;
 import static org.kie.kieora.io.KObjectUtil.*;
 
@@ -68,15 +69,26 @@ public class IOServiceIndexedImpl extends IOServiceDotFileImpl {
 
     public IOServiceIndexedImpl( final MetaIndexEngine indexEngine,
                                  Class<? extends FileAttributeView>... views ) {
+        super();
+        this.indexEngine = checkNotNull( "indexEngine", indexEngine );
+        this.batchIndex = new BatchIndex( indexEngine, this, views );
+        this.views = views;
+    }
+
+    public IOServiceIndexedImpl( final IOWatchService watchService,
+                                 final MetaIndexEngine indexEngine,
+                                 Class<? extends FileAttributeView>... views ) {
+        super( watchService );
         this.indexEngine = checkNotNull( "indexEngine", indexEngine );
         this.batchIndex = new BatchIndex( indexEngine, this, views );
         this.views = views;
     }
 
     public IOServiceIndexedImpl( final LockService lockService,
+                                 final IOWatchService watchService,
                                  final MetaIndexEngine indexEngine,
                                  Class<? extends FileAttributeView>... views ) {
-        super( lockService );
+        super( lockService, watchService );
         this.indexEngine = checkNotNull( "indexEngine", indexEngine );
         this.batchIndex = new BatchIndex( indexEngine, this, views );
         this.views = views;
@@ -127,16 +139,17 @@ public class IOServiceIndexedImpl extends IOServiceDotFileImpl {
 
     private void setupWatchService( final FileSystem fs ) {
         final WatchService ws = fs.newWatchService();
-        new Thread( threadGroup, "IOService(WatchService[" + ( (FileSystemId) fs ).id() + "])" ) {
+        new Thread( threadGroup, "IOService(" + ws.toString() + ")" ) {
             @Override
             public void run() {
-                while ( true ) {
+                while ( !isDisposed ) {
                     final List<WatchEvent<?>> events = ws.take().pollEvents();
                     for ( WatchEvent object : events ) {
-                        if ( object.kind() == StandardWatchEventKind.ENTRY_MODIFY
+                        final WatchContext context = ( (WatchContext) object.context() );
+                        if ( object.kind() == ENTRY_MODIFY
                                 || object.kind() == StandardWatchEventKind.ENTRY_CREATE ) {
 
-                            final Path path = (Path) object.context();
+                            final Path path = context.getPath();
 
                             if ( !path.getFileName().toString().startsWith( "." ) ) {
 
@@ -149,15 +162,14 @@ public class IOServiceIndexedImpl extends IOServiceDotFileImpl {
                             }
                         }
                         if ( object.kind() == StandardWatchEventKind.ENTRY_RENAME ) {
-                            Pair<Path, Path> pair = (Pair<Path, Path>) object.context();
-                            indexEngine.rename( toKObjectKey( pair.getK1() ), toKObjectKey( pair.getK2() ) );
+                            indexEngine.rename( toKObjectKey( context.getOldPath() ), toKObjectKey( context.getPath() ) );
                         }
                         if ( object.kind() == StandardWatchEventKind.ENTRY_DELETE ) {
-                            final Path path = (Path) object.context();
-                            indexEngine.delete( toKObjectKey( path ) );
+                            indexEngine.delete( toKObjectKey( context.getOldPath() ) );
                         }
                     }
                 }
+                ws.close();
             }
         }.start();
     }
@@ -290,86 +302,6 @@ public class IOServiceIndexedImpl extends IOServiceDotFileImpl {
         indexEngine.index( toKObject( path, allAttrs ) );
 
         return path;
-    }
-
-    public Path write( final Path path,
-                       final byte[] bytes,
-                       final OpenOption... options )
-            throws IOException, UnsupportedOperationException, SecurityException {
-        return index( super.write( path, bytes, options ) );
-    }
-
-    public Path write( final Path path,
-                       final byte[] bytes,
-                       final Map<String, ?> attrs,
-                       final OpenOption... options )
-            throws IOException, UnsupportedOperationException, SecurityException {
-        return index( super.write( path, bytes, attrs, options ) );
-    }
-
-    public Path write( final Path path,
-                       final byte[] bytes,
-                       final Set<? extends OpenOption> options,
-                       final FileAttribute<?>... attrs )
-            throws IllegalArgumentException, IOException, UnsupportedOperationException {
-        return index( super.write( path, bytes, options, attrs ) );
-    }
-
-    public Path write( final Path path,
-                       final Iterable<? extends CharSequence> lines,
-                       final Charset cs,
-                       final OpenOption... options )
-            throws IllegalArgumentException, IOException, UnsupportedOperationException, SecurityException {
-        return index( super.write( path, lines, cs, options ) );
-    }
-
-    public Path write( final Path path,
-                       final String content,
-                       final OpenOption... options )
-            throws IllegalArgumentException, IOException, UnsupportedOperationException {
-        return index( super.write( path, content, options ) );
-    }
-
-    public Path write( final Path path,
-                       final String content,
-                       final Charset cs,
-                       final OpenOption... options )
-            throws IllegalArgumentException, IOException, UnsupportedOperationException {
-        return index( super.write( path, content, cs, options ) );
-    }
-
-    public Path write( final Path path,
-                       final String content,
-                       final Set<? extends OpenOption> options,
-                       final FileAttribute<?>... attrs )
-            throws IllegalArgumentException, IOException, UnsupportedOperationException {
-        return index( super.write( path, content, options, attrs ) );
-    }
-
-    public Path write( final Path path,
-                       final String content,
-                       final Charset cs,
-                       final Set<? extends OpenOption> options,
-                       final FileAttribute<?>... attrs )
-            throws IllegalArgumentException, IOException, UnsupportedOperationException {
-        return index( super.write( path, content, cs, options, attrs ) );
-    }
-
-    public Path write( final Path path,
-                       final String content,
-                       final Map<String, ?> attrs,
-                       final OpenOption... options )
-            throws IllegalArgumentException, IOException, UnsupportedOperationException {
-        return index( super.write( path, content, attrs, options ) );
-    }
-
-    public Path write( final Path path,
-                       final String content,
-                       final Charset cs,
-                       final Map<String, ?> attrs,
-                       final OpenOption... options )
-            throws IllegalArgumentException, IOException, UnsupportedOperationException {
-        return index( super.write( path, content, cs, attrs, options ) );
     }
 
     public OutputStream newOutputStream( final Path path,

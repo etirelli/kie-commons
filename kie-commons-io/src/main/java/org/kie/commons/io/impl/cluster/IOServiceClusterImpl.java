@@ -152,7 +152,7 @@ public class IOServiceClusterImpl implements IOService {
                 while ( !msgAnsweredOrTimedout.get() ) {
                     try {
                         Thread.sleep( 100 );
-                    } catch ( InterruptedException e ) {
+                    } catch ( InterruptedException ignored ) {
                     }
                 }
 

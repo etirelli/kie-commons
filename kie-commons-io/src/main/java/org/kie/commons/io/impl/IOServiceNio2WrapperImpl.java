@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.kie.commons.io.IOService;
+import org.kie.commons.io.IOWatchService;
 import org.kie.commons.java.nio.IOException;
 import org.kie.commons.java.nio.channels.SeekableByteChannel;
 import org.kie.commons.java.nio.file.AtomicMoveNotSupportedException;
@@ -44,8 +45,13 @@ public class IOServiceNio2WrapperImpl
         super();
     }
 
-    public IOServiceNio2WrapperImpl( final LockService lockService ) {
-        super( lockService );
+    public IOServiceNio2WrapperImpl( final IOWatchService watchService ) {
+        super( watchService );
+    }
+
+    public IOServiceNio2WrapperImpl( final LockService lockService,
+                                     final IOWatchService watchService ) {
+        super( lockService, watchService );
     }
 
     @Override

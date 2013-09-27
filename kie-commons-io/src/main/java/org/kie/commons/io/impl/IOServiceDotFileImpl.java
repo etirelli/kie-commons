@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.kie.commons.io.IOService;
+import org.kie.commons.io.IOWatchService;
 import org.kie.commons.java.nio.IOException;
 import org.kie.commons.java.nio.base.AbstractBasicFileAttributeView;
 import org.kie.commons.java.nio.base.AttrHolder;
@@ -55,8 +56,13 @@ public class IOServiceDotFileImpl
         super();
     }
 
-    public IOServiceDotFileImpl( final LockService lockService ) {
-        super( lockService );
+    public IOServiceDotFileImpl( final IOWatchService watchService ) {
+        super( watchService );
+    }
+
+    public IOServiceDotFileImpl( final LockService lockService,
+                                 final IOWatchService watchService ) {
+        super( lockService, watchService );
     }
 
     @Override

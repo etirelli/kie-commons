@@ -8,6 +8,8 @@ import java.util.Random;
 import org.junit.Before;
 import org.junit.Test;
 import org.kie.commons.io.impl.IOServiceDotFileImpl;
+import org.kie.commons.java.nio.base.AbstractPath;
+import org.kie.commons.java.nio.base.options.CommentedOption;
 import org.kie.commons.java.nio.base.version.VersionAttributeView;
 import org.kie.commons.java.nio.file.Path;
 
@@ -32,14 +34,16 @@ public class GitAmendTest {
     @Test
     public void testBatch() throws IOException {
         final Path init = ioService.get( URI.create( "git://repo-test/readme.txt" ) );
-        ioService.write( init, "init!" );
-        ioService.write( init, "init 2!" );
+        ioService.write( init, "init!",  new CommentedOption( "User Tester", "message1" ));
+        ioService.write( init, "init 2!", new CommentedOption( "User Tester", "message2" ));
         final Path init2 = ioService.get( URI.create( "git://repo-test/readme2.txt" ) );
-        ioService.write( init2, "init 3!" );
-        ioService.write( init2, "init 4!" );
+        ioService.write( init2, "init 3!", new CommentedOption( "User Tester", "message3" ) );
+        ioService.write( init2, "init 4!", new CommentedOption( "User Tester", "message4" ) );
 
         final VersionAttributeView vinit = ioService.getFileAttributeView( init, VersionAttributeView.class );
         final VersionAttributeView vinit2 = ioService.getFileAttributeView( init, VersionAttributeView.class );
+
+        assertEquals( "init 2!\n", ioService.readAllString( init ));
 
         assertNotNull( vinit );
         assertEquals( 2, vinit.readAttributes().history().records().size() );
