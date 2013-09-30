@@ -1,8 +1,8 @@
 package org.kie.commons.io.impl.cluster.helix;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.helix.Criteria;
 import org.apache.helix.HelixManager;
@@ -20,7 +20,6 @@ import org.kie.commons.message.MessageHandlerResolver;
 import org.kie.commons.message.MessageType;
 
 import static java.util.Arrays.*;
-import static java.util.Collections.*;
 import static java.util.UUID.*;
 import static org.apache.helix.HelixManagerFactory.*;
 
@@ -32,6 +31,8 @@ public class ClusterServiceHelix implements ClusterService {
     private final SimpleLock lock = new SimpleLock();
     private final String resourceName;
     private int stackSize = 0;
+    private final MessageHandlerResolver messageHandlerResolver;
+    private AtomicBoolean started = new AtomicBoolean(false);
 
     public ClusterServiceHelix( final String clusterName,
                                 final String zkAddress,
@@ -41,16 +42,28 @@ public class ClusterServiceHelix implements ClusterService {
         this.clusterName = clusterName;
         this.instanceName = instanceName;
         this.resourceName = resourceName;
+        this.messageHandlerResolver = messageHandlerResolver;
 
+        this.participantManager = getZKHelixManager( clusterName, instanceName, InstanceType.PARTICIPANT, zkAddress );
+    }
+    @Override
+    public void start() {
+        if (isStarted()) {
+            return;
+        }
         try {
-            this.participantManager = getZKHelixManager( clusterName, instanceName, InstanceType.PARTICIPANT, zkAddress );
             this.participantManager.connect();
             disablePartition();
             this.participantManager.getStateMachineEngine().registerStateModelFactory( "LeaderStandby", new LockTransitionalFactory( lock ) );
             this.participantManager.getMessagingService().registerMessageHandlerFactory( Message.MessageType.USER_DEFINE_MSG.toString(), new MessageHandlerResolverWrapper( messageHandlerResolver ).convert() );
+            started.set(true);
         } catch ( final Exception ex ) {
             throw new RuntimeException( ex );
         }
+    }
+
+    public boolean isStarted() {
+        return started.get();
     }
 
     @Override
@@ -61,15 +74,24 @@ public class ClusterServiceHelix implements ClusterService {
     }
 
     private void enablePartition() {
+        if (!isStarted()) {
+            return;
+        }
         participantManager.getClusterManagmentTool().enablePartition( true, clusterName, instanceName, resourceName, asList( resourceName + "_0" ) );
     }
 
     private void disablePartition() {
+        if (!isStarted()) {
+            return;
+        }
         participantManager.getClusterManagmentTool().enablePartition( false, clusterName, instanceName, resourceName, asList( resourceName + "_0" ) );
     }
 
     @Override
     public void lock() {
+        if (!isStarted()) {
+            return;
+        }
         stackSize++;
         if ( lock.isLocked() ) {
             return;
@@ -86,6 +108,9 @@ public class ClusterServiceHelix implements ClusterService {
 
     @Override
     public void unlock() {
+        if (!isStarted()) {
+            return;
+        }
         stackSize--;
         if ( !lock.isLocked() ) {
             stackSize = 0;
@@ -106,6 +131,9 @@ public class ClusterServiceHelix implements ClusterService {
 
     @Override
     public boolean isLocked() {
+        if (!isStarted()) {
+            return true;
+        }
         return lock.isLocked();
     }
 
@@ -113,6 +141,9 @@ public class ClusterServiceHelix implements ClusterService {
     public void broadcastAndWait( MessageType type,
                                   Map<String, String> content,
                                   int timeOut ) {
+        if (!isStarted()) {
+            return;
+        }
         participantManager.getMessagingService().sendAndWait( buildCriteria(), buildMessage( type, content ), new org.apache.helix.messaging.AsyncCallback( timeOut ) {
             @Override
             public void onTimeOut() {
@@ -129,6 +160,9 @@ public class ClusterServiceHelix implements ClusterService {
                                   final Map<String, String> content,
                                   final int timeOut,
                                   final AsyncCallback callback ) {
+        if (!isStarted()) {
+            return;
+        }
         int msg = participantManager.getMessagingService().sendAndWait( buildCriteria(), buildMessage( type, content ), new org.apache.helix.messaging.AsyncCallback() {
             @Override
             public void onTimeOut() {
@@ -151,6 +185,9 @@ public class ClusterServiceHelix implements ClusterService {
     @Override
     public void broadcast( final MessageType type,
                            final Map<String, String> content ) {
+        if (!isStarted()) {
+            return;
+        }
         participantManager.getMessagingService().send( buildCriteria(), buildMessage( type, content ) );
     }
 
@@ -159,6 +196,9 @@ public class ClusterServiceHelix implements ClusterService {
                            final Map<String, String> content,
                            final int timeOut,
                            final AsyncCallback callback ) {
+        if (!isStarted()) {
+            return;
+        }
         participantManager.getMessagingService().send( buildCriteria(), buildMessage( type, content ), new org.apache.helix.messaging.AsyncCallback() {
             @Override
             public void onTimeOut() {
@@ -179,6 +219,9 @@ public class ClusterServiceHelix implements ClusterService {
     public void sendTo( String resourceId,
                         MessageType type,
                         Map<String, String> content ) {
+        if (!isStarted()) {
+            return;
+        }
         participantManager.getMessagingService().send( buildCriteria( resourceId ), buildMessage( type, content ) );
     }
 
