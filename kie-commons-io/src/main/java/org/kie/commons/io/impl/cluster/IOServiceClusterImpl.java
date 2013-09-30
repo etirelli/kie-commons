@@ -22,6 +22,7 @@ import org.kie.commons.cluster.ClusterServiceFactory;
 import org.kie.commons.cluster.LockExecuteNotifySyncReleaseTemplate;
 import org.kie.commons.data.Pair;
 import org.kie.commons.io.FileSystemType;
+import org.kie.commons.io.IOClusteredService;
 import org.kie.commons.io.IOService;
 import org.kie.commons.java.nio.IOException;
 import org.kie.commons.java.nio.base.FileSystemId;
@@ -54,14 +55,20 @@ import org.kie.commons.message.MessageType;
 import static org.kie.commons.io.impl.cluster.ClusterMessageType.*;
 import static org.kie.commons.validation.Preconditions.*;
 
-public class IOServiceClusterImpl implements IOService {
+public class IOServiceClusterImpl implements IOClusteredService {
 
     private final IOService service;
     private final ClusterService clusterService;
     private NewFileSystemListener newFileSystemListener = null;
 
     public IOServiceClusterImpl( final IOService service,
-                                 final ClusterServiceFactory clusterServiceFactory ) {
+            final ClusterServiceFactory clusterServiceFactory ) {
+        this(service, clusterServiceFactory, true);
+    }
+
+    public IOServiceClusterImpl( final IOService service,
+                                 final ClusterServiceFactory clusterServiceFactory,
+                                 final boolean autoStart) {
         checkNotNull( "clusterServiceFactory", clusterServiceFactory );
         this.service = checkNotNull( "service", service );
 
@@ -84,7 +91,15 @@ public class IOServiceClusterImpl implements IOService {
                 return null;
             }
         } );
+        if ( autoStart ) {
+            start();
+        }
 
+    }
+
+    @Override
+    public void start() {
+        this.clusterService.start();
         //New cluster members are executed within locked
         new LockExecuteReleaseTemplate<Void>().execute( clusterService, new FutureTask<Void>( new Callable<Void>() {
             @Override
@@ -105,7 +120,7 @@ public class IOServiceClusterImpl implements IOService {
 
                     @Override
                     public void onReply( final MessageType type,
-                                         final Map<String, String> content ) {
+                            final Map<String, String> content ) {
                         if ( msgAnsweredOrTimedout.get() || onSync.get() ) {
                             return;
                         }
