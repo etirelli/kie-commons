@@ -47,6 +47,7 @@ import org.kie.commons.java.nio.file.Path;
 import org.kie.commons.java.nio.file.ProviderNotFoundException;
 import org.kie.commons.java.nio.file.StandardWatchEventKind;
 import org.kie.commons.java.nio.file.WatchEvent;
+import org.kie.commons.java.nio.file.WatchKey;
 import org.kie.commons.java.nio.file.WatchService;
 import org.kie.commons.java.nio.file.attribute.FileAttribute;
 import org.kie.commons.java.nio.file.attribute.FileAttributeView;
@@ -139,11 +140,16 @@ public class IOServiceIndexedImpl extends IOServiceDotFileImpl {
 
     private void setupWatchService( final FileSystem fs ) {
         final WatchService ws = fs.newWatchService();
-        new Thread( threadGroup, "IOService(" + ws.toString() + ")" ) {
+        new Thread( threadGroup, "IOServiceIndexedImpl(" + ws.toString() + ")" ) {
             @Override
             public void run() {
                 while ( !isDisposed ) {
-                    final List<WatchEvent<?>> events = ws.take().pollEvents();
+                    final WatchKey wk = ws.take();
+                    if ( wk == null ) {
+                        continue;
+                    }
+
+                    final List<WatchEvent<?>> events = wk.pollEvents();
                     for ( WatchEvent object : events ) {
                         final WatchContext context = ( (WatchContext) object.context() );
                         if ( object.kind() == ENTRY_MODIFY
