@@ -6,5 +6,7 @@ import org.kie.commons.message.MessageService;
 public interface ClusterService extends MessageService,
                                         LockService {
 
+    void start();
+
     void dispose();
 }
